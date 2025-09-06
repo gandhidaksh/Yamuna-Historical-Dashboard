@@ -1,5 +1,27 @@
-streamlit
-pandas
-plotly
-openpyxl
-numpy
+# Core runtime (required)
+pandas>=1.5.3           # dataframes / Excel IO
+numpy>=1.24.0           # numeric arrays (pandas dependency)
+openpyxl>=3.1.0         # read/write .xlsx files with pandas
+
+# Optional Excel support (older .xls)
+xlrd>=2.0.1             # read old .xls files if needed
+
+# Optional - for server-side charting or if you later generate Plotly figures in Python
+plotly>=5.13.0
+
+# Utility libraries (pandas pulls some of these, but it's OK to pin)
+python-dateutil>=2.8.2
+pytz>=2023.3
+
+# Development / testing helpers (optional)
+black>=23.9.0           # code formatting (optional)
+flake8>=6.0.0           # linting (optional)
+
+# If you plan to package/ship or use a lightweight web preview
+jinja2>=3.1.2           # templating (optional)
+gunicorn>=20.1.0        # WSGI server for hosting (optional)
+
+# Notes:
+# - tkinter (file dialog) is part of the stdlib for many installs; on Linux install via system package manager:
+#   e.g. Debian/Ubuntu: sudo apt install python3-tk
+# - If you prefer reproducible installs, replace >= with == and fix exact versions.
