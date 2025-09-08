@@ -1,9 +1,10 @@
 # yamuna_dashboard.py
 """
-Yamuna Plotly Dashboard with Enhanced Insights and Data Input
+Yamuna Plotly Dashboard with Enhanced Insights, Data Input, and Map View
 - Place 'Yamuna Report V3.0.xlsx' next to this script, or pick it in the file dialog.
 - Run: python yamuna_dashboard.py
 - The script writes 'yamuna_dashboard.html' next to the script and attempts to open it in your browser.
+- Now includes interactive map view with lat/long coordinates from Excel
 """
 
 from pathlib import Path
@@ -89,6 +90,15 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         if cand:
             df = df.rename(columns={cand: "Location"})
 
+    # Handle Lat/Long columns - preserve them if they exist
+    lat_cols = [c for c in df.columns if c.lower() in ['lat', 'latitude']]
+    lon_cols = [c for c in df.columns if c.lower() in ['long', 'lon', 'longitude']]
+
+    if lat_cols:
+        df = df.rename(columns={lat_cols[0]: "Lat"})
+    if lon_cols:
+        df = df.rename(columns={lon_cols[0]: "Long"})
+
     # Turn Date into datetime
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
@@ -111,8 +121,14 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     if "Year" in df.columns:
         df["Year"] = pd.to_numeric(df["Year"], errors="coerce").astype("Int64")
 
+    # Clean Lat/Long numeric
+    if "Lat" in df.columns:
+        df["Lat"] = pd.to_numeric(df["Lat"], errors="coerce")
+    if "Long" in df.columns:
+        df["Long"] = pd.to_numeric(df["Long"], errors="coerce")
+
     # Coerce numeric parameters where possible (non-essential)
-    essential = {"Year", "Month", "Location", "Date", "Month_Num"}
+    essential = {"Year", "Month", "Location", "Date", "Month_Num", "Lat", "Long"}
     for c in [c for c in df.columns if c not in essential]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
@@ -124,6 +140,14 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     if len(numeric_cols):
         df = df[df[numeric_cols].notna().any(axis=1)]
+
+    # Skip the weights row if it exists (row with description text in parameter columns)
+    if len(df) > 0:
+        # Check if first row contains weight descriptions
+        first_row = df.iloc[0]
+        if any(isinstance(val, str) and ("weight" in str(val).lower() or "ideal range" in str(val).lower()) for val in
+               first_row.values):
+            df = df.iloc[1:].reset_index(drop=True)
 
     df = df.reset_index(drop=True)
     return df
@@ -198,7 +222,7 @@ def prepare_lists_from_df(df: pd.DataFrame):
 
 
 def get_numeric_params(df: pd.DataFrame):
-    essential = {"Year", "Month", "Location", "Date", "Month_Num"}
+    essential = {"Year", "Month", "Location", "Date", "Month_Num", "Lat", "Long"}
     candidates = [c for c in df.columns if c not in essential]
     numeric_params = []
     for c in candidates:
@@ -212,8 +236,28 @@ def get_numeric_params(df: pd.DataFrame):
     return numeric_params
 
 
+def check_coordinates_availability(df: pd.DataFrame):
+    """Check if lat/long coordinates are available and return location coordinate info"""
+    if "Lat" not in df.columns or "Long" not in df.columns:
+        return False, {}
+
+    # Get locations with valid coordinates
+    location_coords = {}
+    for _, row in df.iterrows():
+        location = row.get("Location")
+        lat = row.get("Lat")
+        lng = row.get("Long")
+
+        if location and pd.notna(lat) and pd.notna(lng):
+            if location not in location_coords:
+                location_coords[location] = {"lat": float(lat), "lng": float(lng)}
+
+    has_coords = len(location_coords) > 0
+    return has_coords, location_coords
+
+
 # ----------------------- HTML builder -----------------------
-def build_html(data_rows, months, params, locations, years, out_path: Path):
+def build_html(data_rows, months, params, locations, years, location_coords, out_path: Path):
     # helper to safely dump JSON and avoid closing script tag issues
     def dump_safe(obj):
         js = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
@@ -224,6 +268,7 @@ def build_html(data_rows, months, params, locations, years, out_path: Path):
     params_json = dump_safe(params)
     locs_json = dump_safe(locations)
     years_json = dump_safe(years)
+    coords_json = dump_safe(location_coords)
 
     # Full HTML template
     html_template = '''<!doctype html>
@@ -235,10 +280,12 @@ def build_html(data_rows, months, params, locations, years, out_path: Path):
 
 <link href="https://cdn.jsdelivr.net/npm/tom-select/dist/css/tom-select.default.min.css" rel="stylesheet" />
 <link href="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/14.6.4/nouislider.min.css" rel="stylesheet" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tom-select/dist/js/tom-select.complete.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/14.6.4/nouislider.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <style>
 :root{ --accent1:#0ea5e9; --accent2:#2563eb; --card-bg:#fff; --muted:#6b7280; --ui-width:360px; }
@@ -287,6 +334,72 @@ html,body,#chartsContainer{width:100%; height:100%; overflow-x:hidden;}
 .warning-insight { background: linear-gradient(135deg,#fef3c7,#fde68a); border-left-color: #f59e0b; color: #92400e; }
 .critical-insight { background: linear-gradient(135deg,#fee2e2,#fecaca); border-left-color: #ef4444; color: #991b1b; }
 .positive-insight { background: linear-gradient(135deg,#ecfdf5,#d1fae5); border-left-color: #10b981; color: #065f46; }
+
+/* View Toggle Styles */
+.view-toggle {
+  display: flex;
+  gap: 4px;
+  background: #f1f5f9;
+  padding: 4px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.view-toggle button {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #64748b;
+  transition: all 0.2s;
+}
+.view-toggle button.active {
+  background: white;
+  color: var(--accent2);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* Map Styles */
+#mapContainer {
+  height: 500px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.leaflet-popup-content {
+  max-width: 300px;
+}
+.popup-content {
+  font-size: 12px;
+}
+.popup-content h4 {
+  margin: 0 0 8px 0;
+  color: var(--accent2);
+}
+.popup-content table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.popup-content td {
+  padding: 2px 4px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.popup-content .param-name {
+  font-weight: 600;
+  color: #475569;
+}
+
+.no-coords-message {
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  border-left: 4px solid #f59e0b;
+  padding: 12px;
+  border-radius: 8px;
+  color: #92400e;
+  text-align: center;
+  margin: 20px;
+}
+
 @media (max-width: 900px){ :root{ --ui-width: 300px; } .sidebar{ left: 8px; width: calc(var(--ui-width) - 40px); } .main{ padding-left: calc(var(--ui-width) + 28px); } }
 </style>
 </head>
@@ -395,7 +508,21 @@ html,body,#chartsContainer{width:100%; height:100%; overflow-x:hidden;}
       <button id="clearFormBtn" class="small-btn">Clear Form</button>
     </div>
 
-    <div id="chartsContainer" class="charts-grid"></div>
+    <!-- View Toggle and Content -->
+    <div class="card">
+      <div class="view-toggle">
+        <button id="chartsViewBtn" class="active">📊 Charts View</button>
+        <button id="mapViewBtn">🗺️ Map View</button>
+      </div>
+
+      <div id="chartsContainer" class="charts-grid"></div>
+      <div id="mapContainer" style="display:none;"></div>
+      <div id="noMapMessage" style="display:none;" class="no-coords-message">
+        <strong>No Location Coordinates Available</strong><br>
+        The Excel file does not contain latitude and longitude data for the selected locations. 
+        Map view requires coordinate data to display monitoring stations.
+      </div>
+    </div>
 
     <div class="card">
       <div class="param-title">Data / Selection</div>
@@ -415,9 +542,15 @@ document.addEventListener('DOMContentLoaded', function() {
   const PARAMS = __PARAMS_JSON__;
   const LOCS = __LOCS_JSON__;
   const YEARS = __YEARS_JSON__;
+  const LOCATION_COORDS = __COORDS_JSON__;
+
+  // Check if coordinates are available
+  const HAS_COORDINATES = Object.keys(LOCATION_COORDS).length > 0;
 
   // Data input functionality
   let userAddedData = []; // Store user-added data points
+  let map = null; // Leaflet map instance
+  let currentView = 'charts'; // Track current view
 
   // Standards (bands) - WQI, pH, DO, BOD, etc.
   const STANDARDS = {
@@ -517,6 +650,185 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   preferDefaultParam();
 
+  // View toggle functionality
+  function switchView(view) {
+    currentView = view;
+    const chartsBtn = document.getElementById('chartsViewBtn');
+    const mapBtn = document.getElementById('mapViewBtn');
+    const chartsContainer = document.getElementById('chartsContainer');
+    const mapContainer = document.getElementById('mapContainer');
+    const noMapMessage = document.getElementById('noMapMessage');
+
+    if (view === 'charts') {
+      chartsBtn.classList.add('active');
+      mapBtn.classList.remove('active');
+      chartsContainer.style.display = 'block';
+      mapContainer.style.display = 'none';
+      noMapMessage.style.display = 'none';
+
+      // Resize charts after showing
+      setTimeout(() => {
+        document.querySelectorAll('.plotly-graph-div').forEach(g => {
+          try { Plotly.Plots.resize(g); } catch(e) {}
+        });
+      }, 100);
+    } else {
+      chartsBtn.classList.remove('active');
+      mapBtn.classList.add('active');
+      chartsContainer.style.display = 'none';
+
+      if (!HAS_COORDINATES) {
+        mapContainer.style.display = 'none';
+        noMapMessage.style.display = 'block';
+      } else {
+        mapContainer.style.display = 'block';
+        noMapMessage.style.display = 'none';
+        initializeMap();
+      }
+    }
+  }
+
+  // Map initialization and management
+  function initializeMap() {
+    if (!HAS_COORDINATES) return;
+
+    // Clear existing map
+    if (map) {
+      map.remove();
+      map = null;
+    }
+
+    // Initialize new map
+    map = L.map('mapContainer').setView([28.7041, 77.1025], 10); // Delhi coordinates
+
+    // Add tile layer
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    updateMapMarkers();
+  }
+
+  function updateMapMarkers() {
+    if (!map || !HAS_COORDINATES) return;
+
+    // Clear existing markers
+    map.eachLayer(layer => {
+      if (layer instanceof L.Marker) {
+        map.removeLayer(layer);
+      }
+    });
+
+    const { rows, chosenParams } = filterData();
+
+    // Group data by location
+    const locationData = {};
+    rows.forEach(row => {
+      const location = row.Location;
+      if (location && LOCATION_COORDS[location]) {
+        if (!locationData[location]) {
+          locationData[location] = {
+            coords: LOCATION_COORDS[location],
+            data: []
+          };
+        }
+        locationData[location].data.push(row);
+      }
+    });
+
+    // Add markers for each location
+    Object.keys(locationData).forEach(location => {
+      const locInfo = locationData[location];
+      const coords = locInfo.coords;
+      const data = locInfo.data;
+
+      // Calculate statistics for popup
+      const stats = {};
+      chosenParams.forEach(param => {
+        const values = data.map(row => Number(row[param])).filter(v => Number.isFinite(v));
+        if (values.length > 0) {
+          stats[param] = {
+            count: values.length,
+            avg: values.reduce((a, b) => a + b, 0) / values.length,
+            min: Math.min(...values),
+            max: Math.max(...values)
+          };
+        }
+      });
+
+      // Determine marker color based on water quality
+      let markerColor = '#3388ff'; // Default blue
+      if (chosenParams.includes('WQI') && stats['WQI']) {
+        const avgWQI = stats['WQI'].avg;
+        if (avgWQI >= 71) markerColor = '#059669'; // Good - green
+        else if (avgWQI >= 51) markerColor = '#f59e0b'; // Fair - yellow
+        else if (avgWQI >= 26) markerColor = '#ef4444'; // Poor - red
+        else markerColor = '#7c2d12'; // Very poor - dark red
+      } else if (chosenParams.includes('DO_mg_L') && stats['DO_mg_L']) {
+        const avgDO = stats['DO_mg_L'].avg;
+        if (avgDO >= 5) markerColor = '#059669';
+        else if (avgDO >= 3) markerColor = '#f59e0b';
+        else markerColor = '#ef4444';
+      }
+
+      // Create custom icon
+      const icon = L.divIcon({
+        html: `<div style="background-color: ${markerColor}; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
+        iconSize: [20, 20],
+        className: 'custom-marker'
+      });
+
+      // Create popup content
+      let popupContent = `
+        <div class="popup-content">
+          <h4>${location}</h4>
+          <p><strong>Coordinates:</strong> ${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}</p>
+          <p><strong>Total Measurements:</strong> ${data.length}</p>
+      `;
+
+      if (Object.keys(stats).length > 0) {
+        popupContent += '<table>';
+        chosenParams.forEach(param => {
+          if (stats[param]) {
+            const s = stats[param];
+            popupContent += `
+              <tr>
+                <td class="param-name">${param}:</td>
+                <td>Avg: ${s.avg.toFixed(2)} (${s.min.toFixed(2)}-${s.max.toFixed(2)})</td>
+              </tr>
+            `;
+          }
+        });
+        popupContent += '</table>';
+      }
+
+      popupContent += '</div>';
+
+      // Add marker to map
+      L.marker([coords.lat, coords.lng], { icon: icon })
+        .addTo(map)
+        .bindPopup(popupContent);
+    });
+
+    // Fit map to markers if any exist
+    const markers = [];
+    Object.values(locationData).forEach(locInfo => {
+      markers.push([locInfo.coords.lat, locInfo.coords.lng]);
+    });
+
+    if (markers.length > 0) {
+      const group = new L.featureGroup(Object.keys(locationData).map(location => {
+        const coords = locationData[location].coords;
+        return L.marker([coords.lat, coords.lng]);
+      }));
+      map.fitBounds(group.getBounds().pad(0.1));
+    }
+  }
+
+  // View toggle event listeners
+  document.getElementById('chartsViewBtn').addEventListener('click', () => switchView('charts'));
+  document.getElementById('mapViewBtn').addEventListener('click', () => switchView('maps'));
+
   // Data input functionality
   function addDataPoint() {
     const date = document.getElementById('inputDate').value;
@@ -573,8 +885,11 @@ document.addEventListener('DOMContentLoaded', function() {
     } else {
       sidebar.classList.add('hidden'); floatingToggle.classList.remove('hidden'); mainEl.classList.add('fullwidth');
     }
-    // resize plots after animation
-    setTimeout(()=>{ document.querySelectorAll('.plotly-graph-div').forEach(g=>{ try{ Plotly.Plots.resize(g);}catch(e){} }); }, 150);
+    // resize plots and map after animation
+    setTimeout(()=>{ 
+      document.querySelectorAll('.plotly-graph-div').forEach(g=>{ try{ Plotly.Plots.resize(g);}catch(e){} });
+      if (map) map.invalidateSize();
+    }, 150);
   }
   setSidebarVisible(true);
   hideBtn.addEventListener('click', ()=> setSidebarVisible(false));
@@ -1346,7 +1661,12 @@ document.addEventListener('DOMContentLoaded', function() {
     renderKPIs(rows, chosenParams);
     renderInsights(rows, chosenParams);
     renderTable(rows, chosenParams);
-    renderChartsForParams(rows, chosenParams);
+
+    if (currentView === 'charts') {
+      renderChartsForParams(rows, chosenParams);
+    } else if (currentView === 'maps') {
+      updateMapMarkers();
+    }
   }
 
   // initial render scheduling
@@ -1363,6 +1683,7 @@ document.addEventListener('DOMContentLoaded', function() {
     out_html = out_html.replace("__PARAMS_JSON__", params_json)
     out_html = out_html.replace("__LOCS_JSON__", locs_json)
     out_html = out_html.replace("__YEARS_JSON__", years_json)
+    out_html = out_html.replace("__COORDS_JSON__", coords_json)
 
     out_path.write_text(out_html, encoding="utf-8")
     print("Wrote dashboard to:", out_path)
@@ -1386,6 +1707,18 @@ def main():
         print("No numeric parameters found. Exiting.")
         sys.exit(1)
 
+    # Check for coordinate availability
+    has_coords, location_coords = check_coordinates_availability(df)
+
+    if has_coords:
+        print(f"Found coordinates for {len(location_coords)} locations")
+        for loc, coords in list(location_coords.items())[:5]:  # Show first 5
+            print(f"  {loc}: {coords['lat']:.4f}, {coords['lng']:.4f}")
+        if len(location_coords) > 5:
+            print(f"  ... and {len(location_coords) - 5} more locations")
+    else:
+        print("No latitude/longitude coordinates found in the Excel file")
+
     rows = prepare_json_rows(df)
 
     print("DEBUG: locations:", locations[:10])
@@ -1394,7 +1727,7 @@ def main():
     print("DEBUG: numeric params:", numeric_params[:20])
 
     out_path = Path(__file__).resolve().parent / OUTPUT_HTML
-    build_html(rows, months, numeric_params, locations, years, out_path)
+    build_html(rows, months, numeric_params, locations, years, location_coords, out_path)
 
     try:
         webbrowser.open(out_path.resolve().as_uri())
