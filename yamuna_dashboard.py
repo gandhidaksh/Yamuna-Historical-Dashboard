@@ -1,10 +1,10 @@
-# yamuna_dashboard.py
 """
 Yamuna Plotly Dashboard with Enhanced Insights, Data Input, and Map View
 - Place 'Yamuna Report V3.0.xlsx' next to this script, or pick it in the file dialog.
 - Run: python yamuna_dashboard.py
 - The script writes 'yamuna_dashboard.html' next to the script and attempts to open it in your browser.
 - Now includes interactive map view with lat/long coordinates from Excel
+- Updated WQI boundaries: <50 (Excellent), 50-100 (Good), 100-200 (Poor), 200-300 (Very Poor), >300 (Unsuitable)
 """
 
 from pathlib import Path
@@ -552,14 +552,14 @@ document.addEventListener('DOMContentLoaded', function() {
   let map = null; // Leaflet map instance
   let currentView = 'charts'; // Track current view
 
-  // Standards (bands) - WQI, pH, DO, BOD, etc.
+  // Standards (bands) - CORRECTED WQI boundaries as per Table 3
   const STANDARDS = {
     "WQI":[
-      {min:91,max:100,color:'#059669',label:'Excellent'},
-      {min:71,max:90,color:'#0891b2',label:'Good'},
-      {min:51,max:70,color:'#f59e0b',label:'Fair'},
-      {min:26,max:50,color:'#ef4444',label:'Poor'},
-      {min:0,max:25,color:'#7c2d12',label:'Very Poor'}
+      { range: "Below 50",   label: "Excellent (A)", grade: "A", min: -999, max: 50, color: '#059669' },
+      { range: "50-100",     label: "Good Water (B)", grade: "B", min: 50, max: 100, color: '#0891b2' },
+      { range: "100-200",    label: "Poor Water (C)", grade: "C", min: 100, max: 200, color: '#f59e0b' },
+      { range: "200-300",    label: "Very Poor/Bad (D)", grade: "D", min: 200, max: 300, color: '#ef4444' },
+      { range: "Above 300",  label: "Unsuitable/Unfit (E)", grade: "E", min: 300, max: 999999, color: '#7c2d12' }
     ],
     "pH":[
       {min:6.5,max:8.5,color:'#059669',label:'Good'},
@@ -602,7 +602,7 @@ document.addEventListener('DOMContentLoaded', function() {
     "DO_mg_L": "≥5 mg/l (good quality)",
     "Total_Coliform": "≤500 MPN/100ml (desirable), ≤2500 (max permissible)",
     "Faecal_Coliform": "≤500 MPN/100ml (desirable), ≤2500 (max permissible)",
-    "WQI": "91-100 (Excellent), 71-90 (Good), 51-70 (Fair)"
+    "WQI": "Below 50 (Excellent-A), 50-100 (Good-B), 100-200 (Poor-C), 200-300 (Very Poor-D), Above 300 (Unsuitable-E)"
   };
 
   // small helpers
@@ -756,19 +756,28 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       });
 
-      // Determine marker color based on water quality
+      // Determine marker color based on water quality (CORRECTED WQI thresholds)
       let markerColor = '#3388ff'; // Default blue
+
       if (chosenParams.includes('WQI') && stats['WQI']) {
         const avgWQI = stats['WQI'].avg;
-        if (avgWQI >= 71) markerColor = '#059669'; // Good - green
-        else if (avgWQI >= 51) markerColor = '#f59e0b'; // Fair - yellow
-        else if (avgWQI >= 26) markerColor = '#ef4444'; // Poor - red
-        else markerColor = '#7c2d12'; // Very poor - dark red
+        // CORRECTED: WQI boundaries as per Table 3
+        if (avgWQI < 50) {
+          markerColor = '#059669'; // Excellent (A) - green
+        } else if (avgWQI < 100) {
+          markerColor = '#0891b2'; // Good (B) - teal/blue  
+        } else if (avgWQI < 200) {
+          markerColor = '#f59e0b'; // Poor (C) - yellow/orange
+        } else if (avgWQI < 300) {
+          markerColor = '#ef4444'; // Very Poor (D) - red
+        } else {
+          markerColor = '#7c2d12'; // Unsuitable (E) - dark brown/red
+        }
       } else if (chosenParams.includes('DO_mg_L') && stats['DO_mg_L']) {
         const avgDO = stats['DO_mg_L'].avg;
-        if (avgDO >= 5) markerColor = '#059669';
-        else if (avgDO >= 3) markerColor = '#f59e0b';
-        else markerColor = '#ef4444';
+        if (avgDO >= 5) markerColor = '#059669';     // Good DO - green
+        else if (avgDO >= 3) markerColor = '#f59e0b'; // Moderate DO - yellow/orange
+        else markerColor = '#ef4444';                 // Low DO - red
       }
 
       // Create custom icon
@@ -1003,24 +1012,28 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const overallChange = ((lastAvg - firstAvg) / firstAvg) * 100;
 
-    // Find best and worst years
+    // Find best and worst years - CORRECTED for WQI (lower is better)
     let bestYear = firstYear, worstYear = firstYear;
     let bestAvg = firstAvg, worstAvg = firstAvg;
 
     years.forEach(year => {
       const avg = yearlyAverages[year];
-      if (param === 'DO_mg_L' || param === 'WQI') {
-        // Higher is better for DO and WQI
+      if (param === 'WQI') {
+        // CORRECTED: For WQI, LOWER values are BETTER
+        if (avg < bestAvg) { bestAvg = avg; bestYear = year; }
+        if (avg > worstAvg) { worstAvg = avg; worstYear = year; }
+      } else if (param === 'DO_mg_L') {
+        // For DO, higher is better
         if (avg > bestAvg) { bestAvg = avg; bestYear = year; }
         if (avg < worstAvg) { worstAvg = avg; worstYear = year; }
       } else {
-        // Lower is better for pollutants
+        // For pollutants (BOD, COD, etc.), lower is better
         if (avg < bestAvg) { bestAvg = avg; bestYear = year; }
         if (avg > worstAvg) { worstAvg = avg; worstYear = year; }
       }
     });
 
-    // Determine trend direction and significance
+    // Determine trend direction and significance - CORRECTED for WQI
     let trendText = '';
     let trendClass = '';
 
@@ -1028,7 +1041,17 @@ document.addEventListener('DOMContentLoaded', function() {
       trendText = `${param} levels remained <strong>relatively stable</strong> from ${firstYear} to ${lastYear} (${overallChange.toFixed(1)}% change)`;
       trendClass = '';
     } else {
-      const isImproving = (param === 'DO_mg_L' || param === 'WQI') ? overallChange > 0 : overallChange < 0;
+      let isImproving = false;
+      if (param === 'WQI') {
+        // CORRECTED: For WQI, decrease is improvement (lower WQI = better quality)
+        isImproving = overallChange < 0;
+      } else if (param === 'DO_mg_L') {
+        // For DO, increase is improvement
+        isImproving = overallChange > 0;
+      } else {
+        // For pollutants, decrease is improvement  
+        isImproving = overallChange < 0;
+      }
 
       if (isImproving) {
         if (Math.abs(overallChange) > 20) {
@@ -1057,7 +1080,7 @@ document.addEventListener('DOMContentLoaded', function() {
     return { text: trendText, class: trendClass, years, yearlyAverages };
   }
 
-  // Generate ENHANCED dynamic insights
+  // Generate ENHANCED dynamic insights - CORRECTED WQI thresholds
   function generateInsights(rows, params) {
     const insights = [];
 
@@ -1111,13 +1134,16 @@ document.addEventListener('DOMContentLoaded', function() {
         const avgValues = Object.values(monthAvgs);
         const maxAvg = Math.max(...avgValues);
         const minAvg = Math.min(...avgValues);
-        const bestMonth = Object.keys(monthAvgs).find(m => monthAvgs[m] === maxAvg);
-        const worstMonth = Object.keys(monthAvgs).find(m => monthAvgs[m] === minAvg);
+        const bestMonth = Object.keys(monthAvgs).find(m => monthAvgs[m] === (params[0] === 'WQI' ? minAvg : (params[0] === 'DO_mg_L' ? maxAvg : minAvg)));
+        const worstMonth = Object.keys(monthAvgs).find(m => monthAvgs[m] === (params[0] === 'WQI' ? maxAvg : (params[0] === 'DO_mg_L' ? minAvg : maxAvg)));
 
         let seasonalPattern = '';
         const variation = ((maxAvg - minAvg) / minAvg * 100);
 
-        if (params[0] === 'DO_mg_L' || params[0] === 'WQI') {
+        if (params[0] === 'WQI') {
+          // CORRECTED: For WQI, lower is better
+          seasonalPattern = `<strong>${bestMonth}</strong> shows lowest WQI (best quality), <strong>${worstMonth}</strong> shows highest WQI (worst quality) (${variation.toFixed(1)}% seasonal variation)`;
+        } else if (params[0] === 'DO_mg_L') {
           seasonalPattern = `<strong>${bestMonth}</strong> shows highest ${params[0]} levels, <strong>${worstMonth}</strong> shows lowest (${variation.toFixed(1)}% seasonal variation)`;
         } else {
           seasonalPattern = `<strong>${worstMonth}</strong> shows highest pollution levels, <strong>${bestMonth}</strong> shows lowest (${variation.toFixed(1)}% seasonal variation)`;
@@ -1127,7 +1153,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     }
 
-    // Enhanced Insight 4: Critical Location Analysis
+    // Enhanced Insight 4: Critical Location Analysis - CORRECTED WQI thresholds
     if (params.length === 1 && uniqueLocations.length > 1) {
       const param = params[0];
       const locationStats = {};
@@ -1139,7 +1165,7 @@ document.addEventListener('DOMContentLoaded', function() {
           if (!locationStats[loc]) locationStats[loc] = { values: [], violations: 0 };
           locationStats[loc].values.push(val);
 
-          // Count violations based on parameter type
+          // Count violations based on parameter type - CORRECTED WQI thresholds
           let isViolation = false;
           if (param === 'pH') {
             isViolation = val < 6.5 || val > 8.5;
@@ -1150,7 +1176,8 @@ document.addEventListener('DOMContentLoaded', function() {
           } else if (param.includes('Coliform')) {
             isViolation = val > 2500;
           } else if (param === 'WQI') {
-            isViolation = val < 51;
+            // CORRECTED: WQI > 100 is considered poor quality (C grade or worse)
+            isViolation = val > 100;
           }
 
           if (isViolation) locationStats[loc].violations++;
@@ -1176,7 +1203,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     }
 
-    // Enhanced Insight 5: Temporal Trend Analysis (recent vs historical)
+    // Enhanced Insight 5: Temporal Trend Analysis (recent vs historical) - CORRECTED for WQI
     if (params.length === 1 && rows.length > 10) {
       const param = params[0];
       const timeSeriesData = rows
@@ -1201,15 +1228,33 @@ document.addEventListener('DOMContentLoaded', function() {
           trendText = `${param} levels remain <strong>stable</strong> over time (${trendChange.toFixed(1)}% change)`;
           trendClass = '';
         } else {
-          const isImproving = (param === 'DO_mg_L' || param === 'WQI') ? trendChange > 0 : trendChange < 0;
-
-          if (isImproving) {
-            trendText = `${param} shows <strong>improving trend</strong> - ${Math.abs(trendChange).toFixed(1)}% ${trendChange > 0 ? 'increase' : 'decrease'} in recent period`;
-            trendClass = 'positive-insight';
+          let isImproving = false;
+          if (param === 'WQI') {
+            // CORRECTED: For WQI, decrease is improvement (lower WQI = better quality)
+            isImproving = trendChange < 0;
+          } else if (param === 'DO_mg_L') {
+            // For DO, increase is improvement
+            isImproving = trendChange > 0;
           } else {
-            trendText = `${param} shows <strong>concerning trend</strong> - ${Math.abs(trendChange).toFixed(1)}% ${trendChange > 0 ? 'increase' : 'decrease'} in recent period`;
-            trendClass = 'warning-insight';
+            // For pollutants, decrease is improvement
+            isImproving = trendChange < 0;
           }
+
+          // Calculate the actual date ranges for better context
+const earlyStart = earlyPeriod[0].date;
+const earlyEnd = earlyPeriod[earlyPeriod.length - 1].date;
+const recentStart = recentPeriod[0].date;
+const recentEnd = recentPeriod[recentPeriod.length - 1].date;
+
+const formatDate = (date) => date.toLocaleDateString('en-US', { year: 'numeric', month: 'short' });
+
+if (isImproving) {
+  trendText = `${param} shows <strong>improving trend</strong> - ${Math.abs(trendChange).toFixed(1)}% ${trendChange > 0 ? 'increase' : 'decrease'} from early period (${formatDate(earlyStart)} - ${formatDate(earlyEnd)}) to recent period (${formatDate(recentStart)} - ${formatDate(recentEnd)})`;
+  trendClass = 'positive-insight';
+} else {
+  trendText = `${param} shows <strong>concerning trend</strong> - ${Math.abs(trendChange).toFixed(1)}% ${trendChange > 0 ? 'increase' : 'decrease'} from early period (${formatDate(earlyStart)} - ${formatDate(earlyEnd)}) to recent period (${formatDate(recentStart)} - ${formatDate(recentEnd)})`;
+  trendClass = 'warning-insight';
+}
         }
 
         insights.push(`<div class="insight-box ${trendClass}">${trendText}</div>`);
@@ -1246,7 +1291,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     }
 
-    // Enhanced Insight 7: Compliance Summary
+    // Enhanced Insight 7: Compliance Summary - CORRECTED WQI thresholds
     if (params.length === 1) {
       const param = params[0];
       const values = rows.map(r => Number(r[param])).filter(v => Number.isFinite(v));
@@ -1266,7 +1311,8 @@ document.addEventListener('DOMContentLoaded', function() {
           } else if (param.includes('Coliform')) {
             isCompliant = val <= 500; // desirable limit
           } else if (param === 'WQI') {
-            isCompliant = val >= 71; // Good or better
+            // CORRECTED: WQI < 100 is considered acceptable (A or B grade)
+            isCompliant = val < 100;
           }
 
           if (isCompliant) compliantCount++;
@@ -1283,14 +1329,24 @@ document.addEventListener('DOMContentLoaded', function() {
           complianceClass = 'critical-insight';
         }
 
-        insights.push(`<div class="insight-box ${complianceClass}"><strong>Compliance Rate:</strong> ${complianceRate.toFixed(1)}% of measurements meet quality standards for ${param}</div>`);
+        // Calculate date range for compliance period
+const datesWithValues = rows.filter(r => r.Date && Number.isFinite(Number(r[param]))).map(r => new Date(r.Date)).sort((a,b) => a-b);
+let periodText = '';
+if (datesWithValues.length > 0) {
+  const startDate = datesWithValues[0];
+  const endDate = datesWithValues[datesWithValues.length - 1];
+  const formatDate = (date) => date.toLocaleDateString('en-US', { year: 'numeric', month: 'short' });
+  periodText = ` over ${formatDate(startDate)} - ${formatDate(endDate)} period`;
+}
+
+insights.push(`<div class="insight-box ${complianceClass}"><strong>Compliance Rate:</strong> ${complianceRate.toFixed(1)}% of measurements meet quality standards for ${param}${periodText}</div>`);
       }
     }
 
     return insights.slice(0, 7); // Maximum 7 insights to avoid clutter
   }
 
-  // Generate parameter-specific insights for individual charts
+  // Generate parameter-specific insights for individual charts - CORRECTED for WQI
   function generateParameterInsights(rows, param) {
     if (!rows.length) return '';
 
@@ -1308,7 +1364,7 @@ document.addEventListener('DOMContentLoaded', function() {
       insights.push(`<strong>Yearly Trend:</strong> ${yearlyPerformance.text.replace(/<\/?strong>/g, '')}`);
     }
 
-    // Location-based insights
+    // Location-based insights - CORRECTED for WQI
     const locationStats = {};
     rows.forEach(r => {
       const loc = r.Location;
@@ -1321,13 +1377,30 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (Object.keys(locationStats).length > 1) {
       let bestLoc = '', worstLoc = '';
-      let bestAvg = param === 'DO_mg_L' || param === 'WQI' ? -Infinity : Infinity;
-      let worstAvg = param === 'DO_mg_L' || param === 'WQI' ? Infinity : -Infinity;
+      let bestAvg, worstAvg;
+
+      if (param === 'WQI') {
+        // CORRECTED: For WQI, lower is better
+        bestAvg = Infinity;
+        worstAvg = -Infinity;
+      } else if (param === 'DO_mg_L') {
+        // For DO, higher is better
+        bestAvg = -Infinity;
+        worstAvg = Infinity;
+      } else {
+        // For pollutants, lower is better
+        bestAvg = Infinity;
+        worstAvg = -Infinity;
+      }
 
       Object.keys(locationStats).forEach(loc => {
         const locAvg = locationStats[loc].reduce((a,b) => a+b, 0) / locationStats[loc].length;
 
-        if (param === 'DO_mg_L' || param === 'WQI') {
+        if (param === 'WQI') {
+          // CORRECTED: For WQI, lower average is better
+          if (locAvg < bestAvg) { bestAvg = locAvg; bestLoc = loc; }
+          if (locAvg > worstAvg) { worstAvg = locAvg; worstLoc = loc; }
+        } else if (param === 'DO_mg_L') {
           if (locAvg > bestAvg) { bestAvg = locAvg; bestLoc = loc; }
           if (locAvg < worstAvg) { worstAvg = locAvg; worstLoc = loc; }
         } else {
@@ -1341,7 +1414,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     }
 
-    // Period-based insights (seasonal)
+    // Period-based insights (seasonal) - CORRECTED for WQI
     const monthlyStats = {};
     rows.forEach(r => {
       if (r.Month) {
@@ -1359,9 +1432,18 @@ document.addEventListener('DOMContentLoaded', function() {
         monthAvgs[month] = monthlyStats[month].reduce((a,b) => a+b, 0) / monthlyStats[month].length;
       });
 
-      const sortedMonths = Object.entries(monthAvgs).sort((a,b) => 
-        param === 'DO_mg_L' || param === 'WQI' ? b[1] - a[1] : a[1] - b[1]
-      );
+      const sortedMonths = Object.entries(monthAvgs).sort((a,b) => {
+        if (param === 'WQI') {
+          // CORRECTED: For WQI, sort ascending (lower is better)
+          return a[1] - b[1];
+        } else if (param === 'DO_mg_L') {
+          // For DO, sort descending (higher is better)
+          return b[1] - a[1];
+        } else {
+          // For pollutants, sort ascending (lower is better)
+          return a[1] - b[1];
+        }
+      });
 
       if (sortedMonths.length > 0) {
         const bestMonth = sortedMonths[0];
@@ -1370,7 +1452,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     }
 
-    // Quality assessment over time
+    // Quality assessment over time - CORRECTED WQI thresholds
     let violationCount = 0;
     values.forEach(val => {
       let isViolation = false;
@@ -1384,7 +1466,8 @@ document.addEventListener('DOMContentLoaded', function() {
       } else if (param.includes('Coliform')) {
         isViolation = val > 500;
       } else if (param === 'WQI') {
-        isViolation = val < 71;
+        // CORRECTED: WQI > 100 is considered poor quality
+        isViolation = val > 100;
       }
 
       if (isViolation) violationCount++;
