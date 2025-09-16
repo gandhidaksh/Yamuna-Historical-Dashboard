@@ -17,7 +17,7 @@ Interactive dashboard for analyzing Yamuna River water quality data.
 3. Dashboard opens in your browser
 
 ### Option 2: View Online
-[View Live Dashboard](https://yourusername.github.io/yamuna-water-quality-dashboard/yamuna_dashboard.html)
+[View Live Dashboard](https://gandhidaksh.github.io/Yamuna-Historical-Dashboard/yamuna_dashboard.html)
 
 ## Data
 Based on Yamuna Report V3.0 data covering multiple monitoring locations.
