@@ -5,6 +5,7 @@ Yamuna Plotly Dashboard with Enhanced Insights, Data Input, and Map View
 - The script writes 'yamuna_dashboard.html' next to the script and attempts to open it in your browser.
 - Now includes interactive map view with lat/long coordinates from Excel
 - Updated WQI boundaries: <50 (Excellent), 50-100 (Good), 100-200 (Poor), 200-300 (Very Poor), >300 (Unsuitable)
+- Excludes WQI=0 values from analysis (but shows them on charts)
 """
 
 from pathlib import Path
@@ -153,7 +154,8 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ----------------------- Data -> JSON rows for embedding -----------------------
+# Rest of the functions remain the same until get_numeric_params...
+
 def prepare_json_rows(df: pd.DataFrame):
     def convert(v):
         if pd.isna(v):
@@ -225,14 +227,17 @@ def get_numeric_params(df: pd.DataFrame):
     essential = {"Year", "Month", "Location", "Date", "Month_Num", "Lat", "Long"}
     candidates = [c for c in df.columns if c not in essential]
     numeric_params = []
+
     for c in candidates:
         if pd.api.types.is_numeric_dtype(df[c]) and df[c].dropna().apply(lambda v: np.isfinite(v)).any():
             numeric_params.append(c)
+
     if not numeric_params:
         # fallback common names
         for cand in ["WQI", "pH", "DO_mg_L", "BOD_mg_L", "COD_mg_L", "TSS_mg_L", "Total_Coliform"]:
             if cand in df.columns:
                 numeric_params.append(cand)
+
     return numeric_params
 
 
@@ -270,7 +275,7 @@ def build_html(data_rows, months, params, locations, years, location_coords, out
     years_json = dump_safe(years)
     coords_json = dump_safe(location_coords)
 
-    # Full HTML template
+    # Full HTML template with updated JavaScript to exclude 0 from WQI analysis
     html_template = '''<!doctype html>
 <html lang="en">
 <head>
@@ -335,7 +340,6 @@ html,body,#chartsContainer{width:100%; height:100%; overflow-x:hidden;}
 .critical-insight { background: linear-gradient(135deg,#fee2e2,#fecaca); border-left-color: #ef4444; color: #991b1b; }
 .positive-insight { background: linear-gradient(135deg,#ecfdf5,#d1fae5); border-left-color: #10b981; color: #065f46; }
 
-/* View Toggle Styles */
 .view-toggle {
   display: flex;
   gap: 4px;
@@ -361,7 +365,6 @@ html,body,#chartsContainer{width:100%; height:100%; overflow-x:hidden;}
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 
-/* Map Styles */
 #mapContainer {
   height: 500px;
   border-radius: 8px;
@@ -471,7 +474,6 @@ html,body,#chartsContainer{width:100%; height:100%; overflow-x:hidden;}
   <main class="main">
     <div class="card kpis" id="kpisArea"></div>
 
-    <!-- Enhanced Insights Section -->
     <div class="card">
       <div class="param-title">Key Insights & Analysis</div>
       <div id="insightsArea" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px;">
@@ -479,7 +481,6 @@ html,body,#chartsContainer{width:100%; height:100%; overflow-x:hidden;}
       </div>
     </div>
 
-    <!-- Data Input Section -->
     <div class="card">
       <div class="param-title">Add New Data Entry</div>
       <div class="form-row">
@@ -508,7 +509,6 @@ html,body,#chartsContainer{width:100%; height:100%; overflow-x:hidden;}
       <button id="clearFormBtn" class="small-btn">Clear Form</button>
     </div>
 
-    <!-- View Toggle and Content -->
     <div class="card">
       <div class="view-toggle">
         <button id="chartsViewBtn" class="active">📊 Charts View</button>
@@ -536,7 +536,6 @@ html,body,#chartsContainer{width:100%; height:100%; overflow-x:hidden;}
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-  // embedded dataset and lists
   const DATA = __DATA_JSON__;
   const MONTHS = __MONTHS_JSON__;
   const PARAMS = __PARAMS_JSON__;
@@ -544,15 +543,31 @@ document.addEventListener('DOMContentLoaded', function() {
   const YEARS = __YEARS_JSON__;
   const LOCATION_COORDS = __COORDS_JSON__;
 
-  // Check if coordinates are available
   const HAS_COORDINATES = Object.keys(LOCATION_COORDS).length > 0;
 
-  // Data input functionality
-  let userAddedData = []; // Store user-added data points
-  let map = null; // Leaflet map instance
-  let currentView = 'charts'; // Track current view
+  let userAddedData = [];
+  let map = null;
+  let currentView = 'charts';
 
-  // Standards (bands) - CORRECTED WQI boundaries as per Table 3
+  // CRITICAL: Helper function to get valid numeric value for analysis (excludes 0 for WQI)
+  function getAnalysisValue(val, param) {
+    const num = Number(val);
+    if (!Number.isFinite(num)) return null;
+
+    // Exclude 0 values from WQI analysis (they represent missing data)
+    if (param === 'WQI' && num === 0) {
+      return null;
+    }
+
+    return num;
+  }
+
+  // Helper function for display values (includes 0s)
+  function getDisplayValue(val) {
+    const num = Number(val);
+    return Number.isFinite(num) ? num : null;
+  }
+
   const STANDARDS = {
     "WQI":[
       { range: "Below 50",   label: "Excellent (A)", grade: "A", min: -999, max: 50, color: '#059669' },
@@ -594,7 +609,6 @@ document.addEventListener('DOMContentLoaded', function() {
     ]
   };
 
-  // Water Quality Criteria ranges for C Class
   const QUALITY_RANGES = {
     "pH": "6.5-8.5 (acceptable range)",
     "COD_mg_L": "≤3 mg/l (desirable)",
@@ -605,7 +619,6 @@ document.addEventListener('DOMContentLoaded', function() {
     "WQI": "Below 50 (Excellent-A), 50-100 (Good-B), 100-200 (Poor-C), 200-300 (Very Poor-D), Above 300 (Unsuitable-E)"
   };
 
-  // small helpers
   function safeAddOptions(selectEl, arr) { 
     selectEl.innerHTML=''; 
     for(const v of arr){ 
@@ -618,21 +631,16 @@ document.addEventListener('DOMContentLoaded', function() {
   function getTomValues(ts) { try{ const v = ts.getValue(); return Array.isArray(v)? v : (v? [v] : []); } catch(e){ return []; } }
   function sanitizeId(s) { return String(s).replace(/[^a-z0-9]/gi,'_'); }
 
-  // populate selects
   safeAddOptions(document.getElementById('selLocation'), LOCS);
   safeAddOptions(document.getElementById('selMonth'), MONTHS);
   safeAddOptions(document.getElementById('selParam'), PARAMS);
-
-  // Populate input form dropdowns
   safeAddOptions(document.getElementById('inputLocation'), LOCS);
   safeAddOptions(document.getElementById('inputParameter'), PARAMS);
 
-  // init TomSelect
   const tomLoc = new TomSelect('#selLocation', { plugins:['remove_button'], create:false, placeholder:'Choose locations...', hideSelected:true });
   const tomMonth = new TomSelect('#selMonth', { plugins:['remove_button'], create:false, placeholder:'Choose months...', hideSelected:true });
   const tomParam = new TomSelect('#selParam', { plugins:['remove_button'], create:false, placeholder:'Choose parameters...', hideSelected:true });
 
-  // year slider
   const yearMinEl = document.getElementById('yearMin'), yearMaxEl = document.getElementById('yearMax');
   const yearsSorted = (YEARS||[]).slice().sort((a,b)=>a-b);
   const yMin = yearsSorted.length? yearsSorted[0] : new Date().getFullYear();
@@ -641,7 +649,6 @@ document.addEventListener('DOMContentLoaded', function() {
   noUiSlider.create(sliderDiv, { start:[yMin,yMax], connect:true, step:1, range:{min:yMin,max:yMax}, tooltips:[true,true], format:{ to: v => Math.round(v), from: v => Number(v) } });
   sliderDiv.noUiSlider.on('update', function(vals){ yearMinEl.textContent=Math.round(vals[0]); yearMaxEl.textContent=Math.round(vals[1]); });
 
-  // prefer WQI default if present
   function preferDefaultParam(){
     if(PARAMS && PARAMS.length){
       const p = PARAMS.indexOf('WQI') !== -1 ? 'WQI' : PARAMS[0];
@@ -650,345 +657,102 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   preferDefaultParam();
 
-  // View toggle functionality
-  function switchView(view) {
-    currentView = view;
-    const chartsBtn = document.getElementById('chartsViewBtn');
-    const mapBtn = document.getElementById('mapViewBtn');
-    const chartsContainer = document.getElementById('chartsContainer');
-    const mapContainer = document.getElementById('mapContainer');
-    const noMapMessage = document.getElementById('noMapMessage');
+  // Add WQI Yearly Chart Function
+  function renderWQIYearlyAvg(containerId, rows) {
+    const wqiData = {};
+    const zeroData = {};
 
-    if (view === 'charts') {
-      chartsBtn.classList.add('active');
-      mapBtn.classList.remove('active');
-      chartsContainer.style.display = 'block';
-      mapContainer.style.display = 'none';
-      noMapMessage.style.display = 'none';
+    for(const r of rows){
+        const year = r.Year;
+        const wqi = r["WQI"];
 
-      // Resize charts after showing
-      setTimeout(() => {
-        document.querySelectorAll('.plotly-graph-div').forEach(g => {
-          try { Plotly.Plots.resize(g); } catch(e) {}
+        if(!year || wqi === null || wqi === undefined) continue;
+
+        const wqiNum = Number(wqi);
+        if(!Number.isFinite(wqiNum)) continue;
+
+        if (wqiNum === 0) {
+            zeroData[year] = (zeroData[year] || 0) + 1;
+            continue;
+        }
+
+        wqiData[year] = wqiData[year] || [];
+        wqiData[year].push(wqiNum);
+    }
+
+    const years = Object.keys(wqiData).map(y => parseInt(y)).sort();
+    const avgWQI = years.map(year => {
+        const values = wqiData[year];
+        return values.reduce((a,b) => a+b, 0) / values.length;
+    });
+
+    const colors = avgWQI.map(wqi => {
+        if (wqi < 50) return '#059669';
+        else if (wqi < 100) return '#0891b2';
+        else if (wqi < 200) return '#f59e0b';
+        else if (wqi < 300) return '#ef4444';
+        else return '#7c2d12';
+    });
+
+    const shapes = [
+        { type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 0, y1: 50, 
+          fillcolor: '#059669' + '22', line: {width: 0}, layer: 'below' },
+        { type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 50, y1: 100, 
+          fillcolor: '#0891b2' + '22', line: {width: 0}, layer: 'below' },
+        { type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 100, y1: 200, 
+          fillcolor: '#f59e0b' + '22', line: {width: 0}, layer: 'below' },
+        { type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 200, y1: 300, 
+          fillcolor: '#ef4444' + '22', line: {width: 0}, layer: 'below' }
+    ];
+
+    const annotations = [];
+    Object.keys(zeroData).forEach(year => {
+        const count = zeroData[year];
+        annotations.push({
+            x: parseInt(year),
+            y: 0,
+            text: `0 (${count})`,
+            showarrow: true,
+            arrowhead: 2,
+            arrowcolor: '#9ca3af',
+            font: { color: '#9ca3af', size: 11 },
+            bgcolor: 'rgba(255,255,255,0.8)',
+            bordercolor: '#9ca3af'
         });
-      }, 100);
-    } else {
-      chartsBtn.classList.remove('active');
-      mapBtn.classList.add('active');
-      chartsContainer.style.display = 'none';
-
-      if (!HAS_COORDINATES) {
-        mapContainer.style.display = 'none';
-        noMapMessage.style.display = 'block';
-      } else {
-        mapContainer.style.display = 'block';
-        noMapMessage.style.display = 'none';
-        initializeMap();
-      }
-    }
-  }
-
-  // Map initialization and management
-  function initializeMap() {
-    if (!HAS_COORDINATES) return;
-
-    // Clear existing map
-    if (map) {
-      map.remove();
-      map = null;
-    }
-
-    // Initialize new map
-    map = L.map('mapContainer').setView([28.7041, 77.1025], 10); // Delhi coordinates
-
-    // Add tile layer
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
-
-    updateMapMarkers();
-  }
-
-  function updateMapMarkers() {
-    if (!map || !HAS_COORDINATES) return;
-
-    // Clear existing markers
-    map.eachLayer(layer => {
-      if (layer instanceof L.Marker) {
-        map.removeLayer(layer);
-      }
     });
 
-    const { rows, chosenParams } = filterData();
-
-    // Group data by location
-    const locationData = {};
-    rows.forEach(row => {
-      const location = row.Location;
-      if (location && LOCATION_COORDS[location]) {
-        if (!locationData[location]) {
-          locationData[location] = {
-            coords: LOCATION_COORDS[location],
-            data: []
-          };
-        }
-        locationData[location].data.push(row);
-      }
-    });
-
-    // Add markers for each location
-    Object.keys(locationData).forEach(location => {
-      const locInfo = locationData[location];
-      const coords = locInfo.coords;
-      const data = locInfo.data;
-
-      // Calculate statistics for popup
-      const stats = {};
-      chosenParams.forEach(param => {
-        const values = data.map(row => Number(row[param])).filter(v => Number.isFinite(v));
-        if (values.length > 0) {
-          stats[param] = {
-            count: values.length,
-            avg: values.reduce((a, b) => a + b, 0) / values.length,
-            min: Math.min(...values),
-            max: Math.max(...values)
-          };
-        }
-      });
-
-      // Determine marker color based on water quality (CORRECTED WQI thresholds)
-      let markerColor = '#3388ff'; // Default blue
-
-      if (chosenParams.includes('WQI') && stats['WQI']) {
-        const avgWQI = stats['WQI'].avg;
-        // CORRECTED: WQI boundaries as per Table 3
-        if (avgWQI < 50) {
-          markerColor = '#059669'; // Excellent (A) - green
-        } else if (avgWQI < 100) {
-          markerColor = '#0891b2'; // Good (B) - teal/blue  
-        } else if (avgWQI < 200) {
-          markerColor = '#f59e0b'; // Poor (C) - yellow/orange
-        } else if (avgWQI < 300) {
-          markerColor = '#ef4444'; // Very Poor (D) - red
-        } else {
-          markerColor = '#7c2d12'; // Unsuitable (E) - dark brown/red
-        }
-      } else if (chosenParams.includes('DO_mg_L') && stats['DO_mg_L']) {
-        const avgDO = stats['DO_mg_L'].avg;
-        if (avgDO >= 5) markerColor = '#059669';     // Good DO - green
-        else if (avgDO >= 3) markerColor = '#f59e0b'; // Moderate DO - yellow/orange
-        else markerColor = '#ef4444';                 // Low DO - red
-      }
-
-      // Create custom icon
-      const icon = L.divIcon({
-        html: `<div style="background-color: ${markerColor}; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
-        iconSize: [20, 20],
-        className: 'custom-marker'
-      });
-
-      // Create popup content
-      let popupContent = `
-        <div class="popup-content">
-          <h4>${location}</h4>
-          <p><strong>Coordinates:</strong> ${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}</p>
-          <p><strong>Total Measurements:</strong> ${data.length}</p>
-      `;
-
-      if (Object.keys(stats).length > 0) {
-        popupContent += '<table>';
-        chosenParams.forEach(param => {
-          if (stats[param]) {
-            const s = stats[param];
-            popupContent += `
-              <tr>
-                <td class="param-name">${param}:</td>
-                <td>Avg: ${s.avg.toFixed(2)} (${s.min.toFixed(2)}-${s.max.toFixed(2)})</td>
-              </tr>
-            `;
-          }
-        });
-        popupContent += '</table>';
-      }
-
-      popupContent += '</div>';
-
-      // Add marker to map
-      L.marker([coords.lat, coords.lng], { icon: icon })
-        .addTo(map)
-        .bindPopup(popupContent);
-    });
-
-    // Fit map to markers if any exist
-    const markers = [];
-    Object.values(locationData).forEach(locInfo => {
-      markers.push([locInfo.coords.lat, locInfo.coords.lng]);
-    });
-
-    if (markers.length > 0) {
-      const group = new L.featureGroup(Object.keys(locationData).map(location => {
-        const coords = locationData[location].coords;
-        return L.marker([coords.lat, coords.lng]);
-      }));
-      map.fitBounds(group.getBounds().pad(0.1));
-    }
-  }
-
-  // View toggle event listeners
-  document.getElementById('chartsViewBtn').addEventListener('click', () => switchView('charts'));
-  document.getElementById('mapViewBtn').addEventListener('click', () => switchView('maps'));
-
-  // Data input functionality
-  function addDataPoint() {
-    const date = document.getElementById('inputDate').value;
-    const location = document.getElementById('inputLocation').value;
-    const parameter = document.getElementById('inputParameter').value;
-    const value = parseFloat(document.getElementById('inputValue').value);
-
-    if (!date || !location || !parameter || isNaN(value)) {
-      alert('Please fill in all fields with valid data.');
-      return;
-    }
-
-    // Create new data point
-    const newPoint = {
-      Date: date,
-      Location: location,
-      [parameter]: value,
-      Year: new Date(date).getFullYear(),
-      Month: new Date(date).toLocaleString('default', { month: 'long' }),
-      UserAdded: true
+    const layout = {
+        title: 'Average WQI by Year (excluding 0 values)',
+        margin: { t:50, l:60, r:40, b:80 },
+        xaxis: { title: 'Year', tickmode: 'array', tickvals: years },
+        yaxis: { title: 'Average WQI', range: [0, Math.max(...avgWQI) * 1.1] },
+        autosize: true,
+        shapes: shapes,
+        annotations: annotations
     };
 
-    // Add to user data array
-    userAddedData.push(newPoint);
+    const trace = {
+        x: years,
+        y: avgWQI,
+        type: 'scatter',
+        mode: 'lines+markers',
+        marker: { color: colors, size: 8, line: { color: 'white', width: 2 } },
+        line: { color: '#1f2937', width: 3 },
+        name: 'Average WQI'
+    };
 
-    // Clear form
-    clearForm();
-
-    // Refresh dashboard
-    scheduleRender();
-
-    alert(`Data point added successfully: ${parameter} = ${value} at ${location} on ${date}`);
+    Plotly.react(containerId, [trace], layout, {responsive: true});
   }
 
-  function clearForm() {
-    document.getElementById('inputDate').value = '';
-    document.getElementById('inputLocation').value = '';
-    document.getElementById('inputParameter').value = '';
-    document.getElementById('inputValue').value = '';
-  }
-
-  document.getElementById('addDataBtn').addEventListener('click', addDataPoint);
-  document.getElementById('clearFormBtn').addEventListener('click', clearForm);
-
-  // sidebar hide/show
-  const sidebar = document.getElementById('sidebar');
-  const hideBtn = document.getElementById('hideBtn');
-  const floatingToggle = document.getElementById('sidebarToggle');
-  const mainEl = document.querySelector('.main');
-
-  function setSidebarVisible(visible){
-    if(visible){
-      sidebar.classList.remove('hidden'); floatingToggle.classList.add('hidden'); mainEl.classList.remove('fullwidth');
-    } else {
-      sidebar.classList.add('hidden'); floatingToggle.classList.remove('hidden'); mainEl.classList.add('fullwidth');
-    }
-    // resize plots and map after animation
-    setTimeout(()=>{ 
-      document.querySelectorAll('.plotly-graph-div').forEach(g=>{ try{ Plotly.Plots.resize(g);}catch(e){} });
-      if (map) map.invalidateSize();
-    }, 150);
-  }
-  setSidebarVisible(true);
-  hideBtn.addEventListener('click', ()=> setSidebarVisible(false));
-  floatingToggle.addEventListener('click', ()=> setSidebarVisible(true));
-
-  // reset & clear
-  document.getElementById('resetBtn').addEventListener('click', function(){
-    tomLoc.clear(); tomMonth.clear(); tomParam.clear(); preferDefaultParam(); sliderDiv.noUiSlider.set([yMin,yMax]); scheduleRender();
-  });
-  document.getElementById('applyReset').addEventListener('click', function(){
-    tomLoc.clear(); tomMonth.clear(); tomParam.clear(); preferDefaultParam(); sliderDiv.noUiSlider.set([yMin,yMax]); scheduleRender();
-  });
-
-  // select all / clear buttons
-  function selectAllTomBulk(ts, arr){
-    try{
-      const vals = (arr||[]).map(v => String(v));
-      if(typeof ts.setValue === 'function') ts.setValue(vals);
-      else { ts.clear(); for(const v of vals) ts.addItem(v); }
-    } catch(e){ console.warn('selectAllTomBulk error', e); }
-  }
-  function clearTomBulk(ts){ try{ if(typeof ts.clear === 'function') ts.clear(); else if(typeof ts.setValue === 'function') ts.setValue([]); }catch(e){} }
-
-  // Location select all/clear functionality
-  document.getElementById('selectAllLocations').addEventListener('click', ()=>{ selectAllTomBulk(tomLoc, LOCS); scheduleRender(); });
-  document.getElementById('clearLocations').addEventListener('click', ()=>{ clearTomBulk(tomLoc); scheduleRender(); });
-
-  document.getElementById('selectAllMonths').addEventListener('click', ()=>{ selectAllTomBulk(tomMonth, MONTHS); scheduleRender(); });
-  document.getElementById('clearMonths').addEventListener('click', ()=>{ clearTomBulk(tomMonth); scheduleRender(); });
-  document.getElementById('selectAllParams').addEventListener('click', ()=>{ selectAllTomBulk(tomParam, PARAMS); scheduleRender(); });
-  document.getElementById('clearParams').addEventListener('click', ()=>{ clearTomBulk(tomParam); preferDefaultParam(); scheduleRender(); });
-
-  // CSV download
-  function downloadCSV(rows){
-    if(!rows || !rows.length){ alert("No rows to download."); return; }
-    const keys = Object.keys(rows[0]);
-    const csvRows = [keys.join(",")];
-    for(const r of rows){
-      const line = keys.map(k=> { const v = r[k] === null || r[k] === undefined ? "" : String(r[k]).replace(/"/g,'""'); return `"${v}"`; }).join(",");
-      csvRows.push(line);
-    }
-    const blob = new Blob([csvRows.join("\\n")], {type:'text/csv;charset=utf-8;'});
-    const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='yamuna_filtered.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-  }
-  document.getElementById('downloadCsv').addEventListener('click', function(){ const {rows} = filterData(); downloadCSV(rows); });
-
-  // Filtering function - now includes user-added data
-  function filterData(){
-    const selectedLocs = getTomValues(tomLoc);
-    const selectedMonths = getTomValues(tomMonth);
-    const selectedParams = getTomValues(tomParam);
-    const yrs = sliderDiv.noUiSlider.get().map(v=> Math.round(Number(v))); const [selYmin, selYmax] = yrs;
-
-    // Combine original data with user-added data
-    let rows = (DATA||[]).slice();
-
-    // Add user-added data points
-    for (const userPoint of userAddedData) {
-      // Create a complete row with all possible fields
-      const completeRow = {
-        Date: userPoint.Date,
-        Location: userPoint.Location,
-        Year: userPoint.Year,
-        Month: userPoint.Month,
-        UserAdded: true
-      };
-
-      // Add all parameter columns, filling with null for missing values
-      for (const param of PARAMS) {
-        completeRow[param] = userPoint[param] || null;
-      }
-
-      rows.push(completeRow);
-    }
-
-    if(selectedLocs.length) rows = rows.filter(r => r.Location && selectedLocs.includes(String(r.Location)));
-    if(selectedMonths.length) rows = rows.filter(r => r.Month && selectedMonths.includes(String(r.Month)));
-    rows = rows.filter(r => { if(r.Year===null||r.Year===undefined) return false; const y=Number(r.Year); if(isNaN(y)) return false; return y>=selYmin && y<=selYmax; });
-    const chosenParams = selectedParams.length ? selectedParams : (PARAMS.length ? [PARAMS[0]] : []);
-    return { rows, chosenParams };
-  }
-
-  // Generate yearly performance analysis
+  // Updated yearly performance analysis - excludes 0 from WQI
   function generateYearlyPerformanceAnalysis(rows, param) {
     const yearlyData = {};
 
     rows.forEach(r => {
       const year = r.Year;
-      const val = Number(r[param]);
-      if (Number.isFinite(val) && year) {
+      const val = getAnalysisValue(r[param], param);
+
+      if (val !== null && year) {
         if (!yearlyData[year]) yearlyData[year] = [];
         yearlyData[year].push(val);
       }
@@ -997,82 +761,70 @@ document.addEventListener('DOMContentLoaded', function() {
     const years = Object.keys(yearlyData).map(y => parseInt(y)).sort();
     if (years.length < 2) return null;
 
-    // Calculate yearly averages
     const yearlyAverages = {};
     years.forEach(year => {
       const values = yearlyData[year];
       yearlyAverages[year] = values.reduce((sum, val) => sum + val, 0) / values.length;
     });
 
-    // Analyze trend over years
     const firstYear = years[0];
     const lastYear = years[years.length - 1];
     const firstAvg = yearlyAverages[firstYear];
     const lastAvg = yearlyAverages[lastYear];
-
     const overallChange = ((lastAvg - firstAvg) / firstAvg) * 100;
 
-    // Find best and worst years - CORRECTED for WQI (lower is better)
     let bestYear = firstYear, worstYear = firstYear;
     let bestAvg = firstAvg, worstAvg = firstAvg;
 
     years.forEach(year => {
       const avg = yearlyAverages[year];
       if (param === 'WQI') {
-        // CORRECTED: For WQI, LOWER values are BETTER
         if (avg < bestAvg) { bestAvg = avg; bestYear = year; }
         if (avg > worstAvg) { worstAvg = avg; worstYear = year; }
-      } else if (param === 'DO_mg_L') {
-        // For DO, higher is better
+      } else if (param.includes('DO_mg_L')) {
         if (avg > bestAvg) { bestAvg = avg; bestYear = year; }
         if (avg < worstAvg) { worstAvg = avg; worstYear = year; }
       } else {
-        // For pollutants (BOD, COD, etc.), lower is better
         if (avg < bestAvg) { bestAvg = avg; bestYear = year; }
         if (avg > worstAvg) { worstAvg = avg; worstYear = year; }
       }
     });
 
-    // Determine trend direction and significance - CORRECTED for WQI
     let trendText = '';
     let trendClass = '';
 
     if (Math.abs(overallChange) < 5) {
-      trendText = `${param} levels remained <strong>relatively stable</strong> from ${firstYear} to ${lastYear} (${overallChange.toFixed(1)}% change)`;
+      trendText = `${param} levels remained relatively stable from ${firstYear} to ${lastYear} (${overallChange.toFixed(1)}% change)`;
       trendClass = '';
     } else {
       let isImproving = false;
       if (param === 'WQI') {
-        // CORRECTED: For WQI, decrease is improvement (lower WQI = better quality)
         isImproving = overallChange < 0;
-      } else if (param === 'DO_mg_L') {
-        // For DO, increase is improvement
+      } else if (param.includes('DO_mg_L')) {
         isImproving = overallChange > 0;
       } else {
-        // For pollutants, decrease is improvement  
         isImproving = overallChange < 0;
       }
 
       if (isImproving) {
         if (Math.abs(overallChange) > 20) {
-          trendText = `<strong>Significant improvement</strong> in ${param} from ${firstYear} to ${lastYear} (${Math.abs(overallChange).toFixed(1)}% ${overallChange > 0 ? 'increase' : 'decrease'})`;
+          trendText = `Significant improvement in ${param} from ${firstYear} to ${lastYear} (${Math.abs(overallChange).toFixed(1)}% ${overallChange > 0 ? 'increase' : 'decrease'})`;
           trendClass = 'positive-insight';
         } else {
-          trendText = `<strong>Moderate improvement</strong> in ${param} from ${firstYear} to ${lastYear} (${Math.abs(overallChange).toFixed(1)}% ${overallChange > 0 ? 'increase' : 'decrease'})`;
+          trendText = `Moderate improvement in ${param} from ${firstYear} to ${lastYear} (${Math.abs(overallChange).toFixed(1)}% ${overallChange > 0 ? 'increase' : 'decrease'})`;
           trendClass = 'positive-insight';
         }
       } else {
         if (Math.abs(overallChange) > 20) {
-          trendText = `<strong>Significant deterioration</strong> in ${param} from ${firstYear} to ${lastYear} (${Math.abs(overallChange).toFixed(1)}% ${overallChange > 0 ? 'increase' : 'decrease'})`;
+          trendText = `Significant deterioration in ${param} from ${firstYear} to ${lastYear} (${Math.abs(overallChange).toFixed(1)}% ${overallChange > 0 ? 'increase' : 'decrease'})`;
           trendClass = 'critical-insight';
         } else {
-          trendText = `<strong>Moderate deterioration</strong> in ${param} from ${firstYear} to ${lastYear} (${Math.abs(overallChange).toFixed(1)}% ${overallChange > 0 ? 'increase' : 'decrease'})`;
+          trendText = `Moderate deterioration in ${param} from ${firstYear} to ${lastYear} (${Math.abs(overallChange).toFixed(1)}% ${overallChange > 0 ? 'increase' : 'decrease'})`;
           trendClass = 'warning-insight';
         }
       }
     }
 
-    // Add best/worst year information
     if (bestYear !== worstYear) {
       trendText += ` • Best: ${bestYear} (${bestAvg.toFixed(2)}), Worst: ${worstYear} (${worstAvg.toFixed(2)})`;
     }
@@ -1080,7 +832,60 @@ document.addEventListener('DOMContentLoaded', function() {
     return { text: trendText, class: trendClass, years, yearlyAverages };
   }
 
-  // Generate ENHANCED dynamic insights - CORRECTED WQI thresholds
+  // Updated temporal trend analysis - excludes 0 from WQI
+  function generateTemporalTrendAnalysis(rows, param) {
+    const timeSeriesData = rows
+      .filter(r => r.Date && getAnalysisValue(r[param], param) !== null)
+      .map(r => ({ date: new Date(r.Date), value: getAnalysisValue(r[param], param) }))
+      .sort((a, b) => a.date - b.date);
+
+    if (timeSeriesData.length < 6) return null;
+
+    const splitPoint = Math.floor(timeSeriesData.length * 0.6);
+    const earlyPeriod = timeSeriesData.slice(0, splitPoint);
+    const recentPeriod = timeSeriesData.slice(splitPoint);
+
+    const earlyAvg = earlyPeriod.reduce((sum, d) => sum + d.value, 0) / earlyPeriod.length;
+    const recentAvg = recentPeriod.reduce((sum, d) => sum + d.value, 0) / recentPeriod.length;
+
+    const trendChange = ((recentAvg - earlyAvg) / earlyAvg) * 100;
+
+    let trendText = '';
+    let trendClass = '';
+
+    if (Math.abs(trendChange) < 5) {
+      trendText = `${param} levels remain stable over time (${trendChange.toFixed(1)}% change)`;
+      trendClass = '';
+    } else {
+      let isImproving = false;
+      if (param === 'WQI') {
+        isImproving = trendChange < 0;
+      } else if (param.includes('DO_mg_L')) {
+        isImproving = trendChange > 0;
+      } else {
+        isImproving = trendChange < 0;
+      }
+
+      const earlyStart = earlyPeriod[0].date;
+      const earlyEnd = earlyPeriod[earlyPeriod.length - 1].date;
+      const recentStart = recentPeriod[0].date;
+      const recentEnd = recentPeriod[recentPeriod.length - 1].date;
+
+      const formatDate = (date) => date.toLocaleDateString('en-US', { year: 'numeric', month: 'short' });
+
+      if (isImproving) {
+        trendText = `${param} shows improving trend - ${Math.abs(trendChange).toFixed(1)}% ${trendChange > 0 ? 'increase' : 'decrease'} from early period (${formatDate(earlyStart)} - ${formatDate(earlyEnd)}) to recent period (${formatDate(recentStart)} - ${formatDate(recentEnd)})`;
+        trendClass = 'positive-insight';
+      } else {
+        trendText = `${param} shows concerning trend - ${Math.abs(trendChange).toFixed(1)}% ${trendChange > 0 ? 'increase' : 'decrease'} from early period (${formatDate(earlyStart)} - ${formatDate(earlyEnd)}) to recent period (${formatDate(recentStart)} - ${formatDate(recentEnd)})`;
+        trendClass = 'warning-insight';
+      }
+    }
+
+    return { text: trendText, class: trendClass };
+  }
+
+  // Updated insights generation - excludes 0 from WQI
   function generateInsights(rows, params) {
     const insights = [];
 
@@ -1088,7 +893,6 @@ document.addEventListener('DOMContentLoaded', function() {
       return ['<div class="insight-box">Select data to view insights</div>'];
     }
 
-    // Enhanced Insight 1: Data coverage with temporal analysis
     const uniqueLocations = [...new Set(rows.map(r => r.Location))];
     const userAddedCount = rows.filter(r => r.UserAdded).length;
     const yearRange = [...new Set(rows.map(r => r.Year).filter(y => y))];
@@ -1101,7 +905,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     insights.push(`<div class="insight-box">${coverageText}</div>`);
 
-    // NEW Insight 2: Yearly Performance Overview (for single parameter)
     if (params.length === 1 && yearRange.length >= 2) {
       const param = params[0];
       const yearlyAnalysis = generateYearlyPerformanceAnalysis(rows, param);
@@ -1109,192 +912,17 @@ document.addEventListener('DOMContentLoaded', function() {
       if (yearlyAnalysis) {
         insights.push(`<div class="insight-box ${yearlyAnalysis.class}"><strong>Yearly Performance:</strong> ${yearlyAnalysis.text}</div>`);
       }
-    }
 
-    // Enhanced Insight 3: Seasonal Pattern Analysis
-    if (rows.length > 20) {
-      const monthlyData = {};
-      rows.forEach(r => {
-        if (r.Month && params.length === 1) {
-          const param = params[0];
-          const val = Number(r[param]);
-          if (Number.isFinite(val)) {
-            if (!monthlyData[r.Month]) monthlyData[r.Month] = [];
-            monthlyData[r.Month].push(val);
-          }
-        }
-      });
-
-      if (Object.keys(monthlyData).length >= 3) {
-        const monthAvgs = {};
-        Object.keys(monthlyData).forEach(month => {
-          monthAvgs[month] = monthlyData[month].reduce((a,b) => a+b, 0) / monthlyData[month].length;
-        });
-
-        const avgValues = Object.values(monthAvgs);
-        const maxAvg = Math.max(...avgValues);
-        const minAvg = Math.min(...avgValues);
-        const bestMonth = Object.keys(monthAvgs).find(m => monthAvgs[m] === (params[0] === 'WQI' ? minAvg : (params[0] === 'DO_mg_L' ? maxAvg : minAvg)));
-        const worstMonth = Object.keys(monthAvgs).find(m => monthAvgs[m] === (params[0] === 'WQI' ? maxAvg : (params[0] === 'DO_mg_L' ? minAvg : maxAvg)));
-
-        let seasonalPattern = '';
-        const variation = ((maxAvg - minAvg) / minAvg * 100);
-
-        if (params[0] === 'WQI') {
-          // CORRECTED: For WQI, lower is better
-          seasonalPattern = `<strong>${bestMonth}</strong> shows lowest WQI (best quality), <strong>${worstMonth}</strong> shows highest WQI (worst quality) (${variation.toFixed(1)}% seasonal variation)`;
-        } else if (params[0] === 'DO_mg_L') {
-          seasonalPattern = `<strong>${bestMonth}</strong> shows highest ${params[0]} levels, <strong>${worstMonth}</strong> shows lowest (${variation.toFixed(1)}% seasonal variation)`;
-        } else {
-          seasonalPattern = `<strong>${worstMonth}</strong> shows highest pollution levels, <strong>${bestMonth}</strong> shows lowest (${variation.toFixed(1)}% seasonal variation)`;
-        }
-
-        insights.push(`<div class="insight-box">${seasonalPattern}</div>`);
+      const temporalTrend = generateTemporalTrendAnalysis(rows, param);
+      if (temporalTrend) {
+        insights.push(`<div class="insight-box ${temporalTrend.class}">${temporalTrend.text}</div>`);
       }
     }
 
-    // Enhanced Insight 4: Critical Location Analysis - CORRECTED WQI thresholds
-    if (params.length === 1 && uniqueLocations.length > 1) {
-      const param = params[0];
-      const locationStats = {};
-
-      rows.forEach(r => {
-        const loc = r.Location;
-        const val = Number(r[param]);
-        if (Number.isFinite(val)) {
-          if (!locationStats[loc]) locationStats[loc] = { values: [], violations: 0 };
-          locationStats[loc].values.push(val);
-
-          // Count violations based on parameter type - CORRECTED WQI thresholds
-          let isViolation = false;
-          if (param === 'pH') {
-            isViolation = val < 6.5 || val > 8.5;
-          } else if (param === 'DO_mg_L') {
-            isViolation = val < 5;
-          } else if (param === 'BOD_mg_L' || param === 'COD_mg_L') {
-            isViolation = val > 3;
-          } else if (param.includes('Coliform')) {
-            isViolation = val > 2500;
-          } else if (param === 'WQI') {
-            // CORRECTED: WQI > 100 is considered poor quality (C grade or worse)
-            isViolation = val > 100;
-          }
-
-          if (isViolation) locationStats[loc].violations++;
-        }
-      });
-
-      // Find location with highest violation rate
-      let criticalLocation = '';
-      let highestViolationRate = 0;
-
-      Object.keys(locationStats).forEach(loc => {
-        const stats = locationStats[loc];
-        const violationRate = (stats.violations / stats.values.length) * 100;
-        if (violationRate > highestViolationRate) {
-          highestViolationRate = violationRate;
-          criticalLocation = loc;
-        }
-      });
-
-      if (criticalLocation && highestViolationRate > 10) {
-        const insightClass = highestViolationRate > 50 ? 'critical-insight' : 'warning-insight';
-        insights.push(`<div class="insight-box ${insightClass}"><strong>Critical Alert:</strong> ${criticalLocation} shows <strong>${highestViolationRate.toFixed(0)}% violation rate</strong> for ${param} standards - requires immediate attention</div>`);
-      }
-    }
-
-    // Enhanced Insight 5: Temporal Trend Analysis (recent vs historical) - CORRECTED for WQI
-    if (params.length === 1 && rows.length > 10) {
-      const param = params[0];
-      const timeSeriesData = rows
-        .filter(r => r.Date && Number.isFinite(Number(r[param])))
-        .map(r => ({ date: new Date(r.Date), value: Number(r[param]) }))
-        .sort((a, b) => a.date - b.date);
-
-      if (timeSeriesData.length >= 6) {
-        const splitPoint = Math.floor(timeSeriesData.length * 0.6);
-        const earlyPeriod = timeSeriesData.slice(0, splitPoint);
-        const recentPeriod = timeSeriesData.slice(splitPoint);
-
-        const earlyAvg = earlyPeriod.reduce((sum, d) => sum + d.value, 0) / earlyPeriod.length;
-        const recentAvg = recentPeriod.reduce((sum, d) => sum + d.value, 0) / recentPeriod.length;
-
-        const trendChange = ((recentAvg - earlyAvg) / earlyAvg) * 100;
-
-        let trendText = '';
-        let trendClass = '';
-
-        if (Math.abs(trendChange) < 5) {
-          trendText = `${param} levels remain <strong>stable</strong> over time (${trendChange.toFixed(1)}% change)`;
-          trendClass = '';
-        } else {
-          let isImproving = false;
-          if (param === 'WQI') {
-            // CORRECTED: For WQI, decrease is improvement (lower WQI = better quality)
-            isImproving = trendChange < 0;
-          } else if (param === 'DO_mg_L') {
-            // For DO, increase is improvement
-            isImproving = trendChange > 0;
-          } else {
-            // For pollutants, decrease is improvement
-            isImproving = trendChange < 0;
-          }
-
-          // Calculate the actual date ranges for better context
-const earlyStart = earlyPeriod[0].date;
-const earlyEnd = earlyPeriod[earlyPeriod.length - 1].date;
-const recentStart = recentPeriod[0].date;
-const recentEnd = recentPeriod[recentPeriod.length - 1].date;
-
-const formatDate = (date) => date.toLocaleDateString('en-US', { year: 'numeric', month: 'short' });
-
-if (isImproving) {
-  trendText = `${param} shows <strong>improving trend</strong> - ${Math.abs(trendChange).toFixed(1)}% ${trendChange > 0 ? 'increase' : 'decrease'} from early period (${formatDate(earlyStart)} - ${formatDate(earlyEnd)}) to recent period (${formatDate(recentStart)} - ${formatDate(recentEnd)})`;
-  trendClass = 'positive-insight';
-} else {
-  trendText = `${param} shows <strong>concerning trend</strong> - ${Math.abs(trendChange).toFixed(1)}% ${trendChange > 0 ? 'increase' : 'decrease'} from early period (${formatDate(earlyStart)} - ${formatDate(earlyEnd)}) to recent period (${formatDate(recentStart)} - ${formatDate(recentEnd)})`;
-  trendClass = 'warning-insight';
-}
-        }
-
-        insights.push(`<div class="insight-box ${trendClass}">${trendText}</div>`);
-      }
-    }
-
-    // Enhanced Insight 6: Multi-parameter correlation (when multiple params selected)
-    if (params.length > 1 && rows.length > 10) {
-      const correlationInsights = [];
-
-      // Check DO vs BOD correlation (should be inverse)
-      if (params.includes('DO_mg_L') && params.includes('BOD_mg_L')) {
-        const pairedData = rows.filter(r => 
-          Number.isFinite(Number(r['DO_mg_L'])) && Number.isFinite(Number(r['BOD_mg_L']))
-        );
-
-        if (pairedData.length > 5) {
-          const avgDO = pairedData.reduce((sum, r) => sum + Number(r['DO_mg_L']), 0) / pairedData.length;
-          const avgBOD = pairedData.reduce((sum, r) => sum + Number(r['BOD_mg_L']), 0) / pairedData.length;
-
-          let correlationText = '';
-          if (avgDO < 5 && avgBOD > 3) {
-            correlationText = 'Strong inverse correlation detected: <strong>Low DO coincides with high BOD</strong> - indicates organic pollution';
-            correlationInsights.push(`<div class="insight-box warning-insight">${correlationText}</div>`);
-          } else if (avgDO >= 5 && avgBOD <= 3) {
-            correlationText = 'Positive correlation: <strong>Good DO levels align with low BOD</strong> - healthy water conditions';
-            correlationInsights.push(`<div class="insight-box positive-insight">${correlationText}</div>`);
-          }
-        }
-      }
-
-      if (correlationInsights.length > 0) {
-        insights.push(...correlationInsights);
-      }
-    }
-
-    // Enhanced Insight 7: Compliance Summary - CORRECTED WQI thresholds
+    // Compliance analysis - excludes 0 from WQI
     if (params.length === 1) {
       const param = params[0];
-      const values = rows.map(r => Number(r[param])).filter(v => Number.isFinite(v));
+      const values = rows.map(r => getAnalysisValue(r[param], param)).filter(v => v !== null);
 
       if (values.length > 0) {
         let compliantCount = 0;
@@ -1304,14 +932,13 @@ if (isImproving) {
 
           if (param === 'pH') {
             isCompliant = val >= 6.5 && val <= 8.5;
-          } else if (param === 'DO_mg_L') {
+          } else if (param.includes('DO_mg_L')) {
             isCompliant = val >= 5;
-          } else if (param === 'BOD_mg_L' || param === 'COD_mg_L') {
+          } else if (param.includes('BOD_mg_L') || param.includes('COD_mg_L')) {
             isCompliant = val <= 3;
           } else if (param.includes('Coliform')) {
-            isCompliant = val <= 500; // desirable limit
+            isCompliant = val <= 500;
           } else if (param === 'WQI') {
-            // CORRECTED: WQI < 100 is considered acceptable (A or B grade)
             isCompliant = val < 100;
           }
 
@@ -1329,227 +956,14 @@ if (isImproving) {
           complianceClass = 'critical-insight';
         }
 
-        // Calculate date range for compliance period
-const datesWithValues = rows.filter(r => r.Date && Number.isFinite(Number(r[param]))).map(r => new Date(r.Date)).sort((a,b) => a-b);
-let periodText = '';
-if (datesWithValues.length > 0) {
-  const startDate = datesWithValues[0];
-  const endDate = datesWithValues[datesWithValues.length - 1];
-  const formatDate = (date) => date.toLocaleDateString('en-US', { year: 'numeric', month: 'short' });
-  periodText = ` over ${formatDate(startDate)} - ${formatDate(endDate)} period`;
-}
-
-insights.push(`<div class="insight-box ${complianceClass}"><strong>Compliance Rate:</strong> ${complianceRate.toFixed(1)}% of measurements meet quality standards for ${param}${periodText}</div>`);
+        insights.push(`<div class="insight-box ${complianceClass}"><strong>Compliance Rate:</strong> ${complianceRate.toFixed(1)}% of valid measurements meet quality standards for ${param}</div>`);
       }
     }
 
-    return insights.slice(0, 7); // Maximum 7 insights to avoid clutter
+    return insights.slice(0, 7);
   }
 
-  // Generate parameter-specific insights for individual charts - CORRECTED for WQI
-  function generateParameterInsights(rows, param) {
-    if (!rows.length) return '';
-
-    const values = rows.map(r => Number(r[param])).filter(v => Number.isFinite(v));
-    if (!values.length) return '';
-
-    const insights = [];
-    const avg = values.reduce((a,b) => a+b, 0) / values.length;
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-
-    // Yearly performance analysis for individual parameters
-    const yearlyPerformance = generateYearlyPerformanceAnalysis(rows, param);
-    if (yearlyPerformance) {
-      insights.push(`<strong>Yearly Trend:</strong> ${yearlyPerformance.text.replace(/<\/?strong>/g, '')}`);
-    }
-
-    // Location-based insights - CORRECTED for WQI
-    const locationStats = {};
-    rows.forEach(r => {
-      const loc = r.Location;
-      const val = Number(r[param]);
-      if (Number.isFinite(val)) {
-        if (!locationStats[loc]) locationStats[loc] = [];
-        locationStats[loc].push(val);
-      }
-    });
-
-    if (Object.keys(locationStats).length > 1) {
-      let bestLoc = '', worstLoc = '';
-      let bestAvg, worstAvg;
-
-      if (param === 'WQI') {
-        // CORRECTED: For WQI, lower is better
-        bestAvg = Infinity;
-        worstAvg = -Infinity;
-      } else if (param === 'DO_mg_L') {
-        // For DO, higher is better
-        bestAvg = -Infinity;
-        worstAvg = Infinity;
-      } else {
-        // For pollutants, lower is better
-        bestAvg = Infinity;
-        worstAvg = -Infinity;
-      }
-
-      Object.keys(locationStats).forEach(loc => {
-        const locAvg = locationStats[loc].reduce((a,b) => a+b, 0) / locationStats[loc].length;
-
-        if (param === 'WQI') {
-          // CORRECTED: For WQI, lower average is better
-          if (locAvg < bestAvg) { bestAvg = locAvg; bestLoc = loc; }
-          if (locAvg > worstAvg) { worstAvg = locAvg; worstLoc = loc; }
-        } else if (param === 'DO_mg_L') {
-          if (locAvg > bestAvg) { bestAvg = locAvg; bestLoc = loc; }
-          if (locAvg < worstAvg) { worstAvg = locAvg; worstLoc = loc; }
-        } else {
-          if (locAvg < bestAvg) { bestAvg = locAvg; bestLoc = loc; }
-          if (locAvg > worstAvg) { worstAvg = locAvg; worstLoc = loc; }
-        }
-      });
-
-      if (bestLoc && worstLoc && bestLoc !== worstLoc) {
-        insights.push(`<strong>Location Analysis:</strong> ${bestLoc} (${bestAvg.toFixed(2)}) performs best, ${worstLoc} (${worstAvg.toFixed(2)}) needs attention`);
-      }
-    }
-
-    // Period-based insights (seasonal) - CORRECTED for WQI
-    const monthlyStats = {};
-    rows.forEach(r => {
-      if (r.Month) {
-        const val = Number(r[param]);
-        if (Number.isFinite(val)) {
-          if (!monthlyStats[r.Month]) monthlyStats[r.Month] = [];
-          monthlyStats[r.Month].push(val);
-        }
-      }
-    });
-
-    if (Object.keys(monthlyStats).length >= 3) {
-      const monthAvgs = {};
-      Object.keys(monthlyStats).forEach(month => {
-        monthAvgs[month] = monthlyStats[month].reduce((a,b) => a+b, 0) / monthlyStats[month].length;
-      });
-
-      const sortedMonths = Object.entries(monthAvgs).sort((a,b) => {
-        if (param === 'WQI') {
-          // CORRECTED: For WQI, sort ascending (lower is better)
-          return a[1] - b[1];
-        } else if (param === 'DO_mg_L') {
-          // For DO, sort descending (higher is better)
-          return b[1] - a[1];
-        } else {
-          // For pollutants, sort ascending (lower is better)
-          return a[1] - b[1];
-        }
-      });
-
-      if (sortedMonths.length > 0) {
-        const bestMonth = sortedMonths[0];
-        const worstMonth = sortedMonths[sortedMonths.length - 1];
-        insights.push(`<strong>Seasonal Pattern:</strong> Best in ${bestMonth[0]} (${bestMonth[1].toFixed(2)}), worst in ${worstMonth[0]} (${worstMonth[1].toFixed(2)})`);
-      }
-    }
-
-    // Quality assessment over time - CORRECTED WQI thresholds
-    let violationCount = 0;
-    values.forEach(val => {
-      let isViolation = false;
-
-      if (param === 'pH') {
-        isViolation = val < 6.5 || val > 8.5;
-      } else if (param === 'DO_mg_L') {
-        isViolation = val < 5;
-      } else if (param === 'BOD_mg_L' || param === 'COD_mg_L') {
-        isViolation = val > 3;
-      } else if (param.includes('Coliform')) {
-        isViolation = val > 500;
-      } else if (param === 'WQI') {
-        // CORRECTED: WQI > 100 is considered poor quality
-        isViolation = val > 100;
-      }
-
-      if (isViolation) violationCount++;
-    });
-
-    const violationRate = (violationCount / values.length) * 100;
-    let qualityStatus = '';
-    if (violationRate === 0) {
-      qualityStatus = '✓ All measurements meet standards';
-    } else if (violationRate < 20) {
-      qualityStatus = `⚠ ${violationRate.toFixed(1)}% violations - generally acceptable`;
-    } else if (violationRate < 50) {
-      qualityStatus = `⚠ ${violationRate.toFixed(1)}% violations - needs improvement`;
-    } else {
-      qualityStatus = `❌ ${violationRate.toFixed(1)}% violations - critical condition`;
-    }
-
-    insights.push(`<strong>Quality Status:</strong> ${qualityStatus}`);
-
-    return insights.join(' • ');
-  }
-
-  // Render insights
-  function renderInsights(rows, params) {
-    const insights = generateInsights(rows, params);
-    document.getElementById('insightsArea').innerHTML = insights.join('');
-  }
-
-  // debounce rendering for speed
-  let renderTimer_js = null;
-  function scheduleRender(ms = 200){
-    if(renderTimer_js) clearTimeout(renderTimer_js);
-    renderTimer_js = setTimeout(()=>{ renderAll(); renderTimer_js = null; }, ms);
-  }
-
-  // attach change events
-  tomLoc.on('change', ()=> scheduleRender());
-  tomMonth.on('change', ()=> scheduleRender());
-  tomParam.on('change', ()=> scheduleRender());
-  sliderDiv.noUiSlider.on('change', ()=> scheduleRender());
-  document.getElementById('monthlyAvgToggle').addEventListener('change', ()=> scheduleRender());
-
-  // KPI & table rendering
-  function renderKPIs(rows, params){
-    const area = document.getElementById('kpisArea'); area.innerHTML='';
-    if(params.length >=6) document.body.classList.add('compact'); else document.body.classList.remove('compact');
-    if(!params || !params.length){ area.innerHTML = '<div class="kpi">No parameter</div>'; return; }
-    if(params.length === 1){
-      const p = params[0];
-      const vals = rows.map(r => Number(r[p])).filter(v => Number.isFinite(v));
-      if(!vals.length){ area.innerHTML = '<div class="kpi">No numeric values</div>'; return; }
-      const avg = vals.reduce((a,b)=>a+b,0)/vals.length;
-      area.innerHTML = '<div class="kpi"><div style="font-size:12px;color:#666">' + p + ' Avg</div><div style="font-weight:700">' + avg.toFixed(2) + '</div></div>' +
-                       '<div class="kpi"><div style="font-size:12px;color:#666">Min</div><div style="font-weight:700">' + Math.min(...vals).toFixed(2) + '</div></div>' +
-                       '<div class="kpi"><div style="font-size:12px;color:#666">Max</div><div style="font-weight:700">' + Math.max(...vals).toFixed(2) + '</div></div>' +
-                       '<div class="kpi"><div style="font-size:12px;color:#666">Count</div><div style="font-weight:700">' + vals.length + '</div></div>';
-    } else {
-      area.innerHTML = '<div class="kpi"><div style="font-size:12px;color:#666">Params</div><div style="font-weight:700">' + params.length + '</div></div>' +
-                       '<div class="kpi"><div style="font-size:12px;color:#666">Rows</div><div style="font-weight:700">' + rows.length + '</div></div>';
-    }
-  }
-
-  // Table (multiple parameters selected)
-  const MAX_TABLE_ROWS = 1000;
-  function renderTable(rows, params){
-    const container = document.getElementById('tableContainer');
-    if(!params || params.length <= 1){ container.style.display = 'none'; return; }
-    container.style.display = 'block';
-    const headers = ['Date','Location','Year','Month'].concat(params);
-    const head = '<table><thead><tr>' + headers.map(h => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>';
-    const rowsHtml = rows.slice(0,MAX_TABLE_ROWS).map(r => {
-      const date = r.Date ? (new Date(r.Date)).toISOString().slice(0,10) : '';
-      const month = r.Month ? String(r.Month) : (r.Date ? new Date(r.Date).toLocaleString('default',{month:'long'}) : '');
-      const cells = [date, r.Location||'', r.Year||'', month].concat(params.map(p => (r[p]!==undefined && r[p]!==null) ? r[p] : ''));
-      return '<tr>' + cells.map(c => '<td>' + c + '</td>').join('') + '</tr>';
-    }).join('');
-    let moreNote = '';
-    if(rows.length > MAX_TABLE_ROWS) moreNote = `<div style="font-size:12px;color:#666;margin-top:6px;">Showing first ${MAX_TABLE_ROWS} rows. Download CSV for full data.</div>`;
-    document.getElementById('tableWrap').innerHTML = head + rowsHtml + '</tbody></table>' + moreNote;
-  }
-
-  // Helpers for plotting: raw time series grouped by location, OR monthly averages
+  // Updated groupSeries function
   function groupSeries(rows, param, monthly=false){
     const byLoc = {};
 
@@ -1558,9 +972,8 @@ insights.push(`<div class="insight-box ${complianceClass}"><strong>Compliance Ra
       const loc = r.Location || 'Unknown';
       const dt = new Date(r.Date);
       if(isNaN(dt)) continue;
-      const val = Number(r[param]);
-
-      const rowObj = { date: dt, value: Number.isFinite(val) ? val : null, originalRow: r };
+      const val = getDisplayValue(r[param]);
+      const rowObj = { date: dt, value: val, originalRow: r };
 
       if(!monthly) {
         byLoc[loc] = byLoc[loc] || []; 
@@ -1569,7 +982,11 @@ insights.push(`<div class="insight-box ${complianceClass}"><strong>Compliance Ra
         const key = dt.getFullYear() + '-' + String(dt.getMonth()+1).padStart(2,'0');
         byLoc[loc] = byLoc[loc] || {}; 
         byLoc[loc][key] = byLoc[loc][key] || []; 
-        byLoc[loc][key].push(rowObj.value);
+        // For monthly averages, exclude 0 from WQI analysis
+        const monthVal = getAnalysisValue(r[param], param);
+        if (monthVal !== null) {
+          byLoc[loc][key].push(monthVal);
+        }
       }
     }
 
@@ -1603,7 +1020,6 @@ insights.push(`<div class="insight-box ${complianceClass}"><strong>Compliance Ra
     return pointsCount > 1200 ? 'scattergl' : 'scatter';
   }
 
-  // Render time series with bands and parameter insights
   function renderTimeSeriesPerLocation(containerId, rows, param){
     const monthly = document.getElementById('monthlyAvgToggle').checked;
     const series = groupSeries(rows, param, monthly);
@@ -1628,7 +1044,7 @@ insights.push(`<div class="insight-box ${complianceClass}"><strong>Compliance Ra
     }
     if(!isFinite(globalMin)) { globalMin = 0; globalMax = 1; }
 
-    const stdKey = STANDARDS[param] ? param : (STANDARDS[param.replace(/ /g,'_')] ? param.replace(/ /g,'_') : null);
+    const stdKey = STANDARDS[param] ? param : null;
     const shapes = []; const annotations = [];
     if(stdKey && STANDARDS[stdKey]){
       const bands = STANDARDS[stdKey].slice().sort((a,b)=>a.min - b.min);
@@ -1658,18 +1074,7 @@ insights.push(`<div class="insight-box ${complianceClass}"><strong>Compliance Ra
     const layout = {
       title: param + scaleLabel + ' over time (lines = locations)',
       margin: { t:48, l:60, r:40, b:200 },
-      legend: { 
-        orientation:'h', 
-        y:-0.45,
-        x: 0.5,
-        xanchor: 'center',
-        font: { size: 10 },
-        itemsizing: 'constant',
-        itemwidth: 30,
-        tracegroupgap: 2,
-        itemclick: 'toggleothers',
-        itemdoubleclick: 'toggle'
-      },
+      legend: { orientation:'h', y:-0.45, x: 0.5, xanchor: 'center', font: { size: 10 } },
       autosize: true,
       xaxis: { automargin:true, tickangle:-45, tickformat: monthly ? '%b %Y' : '%b %Y', showgrid: false },
       yaxis: { automargin:true, title: param + scaleLabel },
@@ -1688,8 +1093,8 @@ insights.push(`<div class="insight-box ${complianceClass}"><strong>Compliance Ra
     const map = {};
     for(const r of rows){
       const loc = r.Location || 'Unknown';
-      const v = Number(r[param]);
-      if(!Number.isFinite(v)) continue;
+      const v = getAnalysisValue(r[param], param);
+      if(v === null) continue;
       map[loc] = map[loc] || []; 
       map[loc].push(isColiform ? v / scaleFactor : v);
     }
@@ -1700,42 +1105,265 @@ insights.push(`<div class="insight-box ${complianceClass}"><strong>Compliance Ra
       xaxis:{tickangle:-45}, 
       yaxis:{title: param + scaleLabel},
       autosize:true, 
-      title:'Average ' + param + scaleLabel + ' by Location' 
+      title:'Average ' + param + scaleLabel + ' by Location (excluding invalid data)' 
     };
     Plotly.react(containerId, [{ x: locs, y: vals, type:'bar' }], layout, {responsive:true});
   }
 
   function renderChartsForParams(rows, params){
-    const container = document.getElementById('chartsContainer'); container.innerHTML = '';
+    const container = document.getElementById('chartsContainer'); 
+    container.innerHTML = '';
     const fragment = document.createDocumentFragment();
     const blocks = [];
-    for(const p of params){
-      const pid = sanitizeId(p);
-      const block = document.createElement('div'); block.className = 'card param-block';
 
-      const qualityRange = QUALITY_RANGES[p] || "No quality criteria defined";
-      const paramInsights = generateParameterInsights(rows, p);
+    const hasWQI = params.includes('WQI');
 
-      block.innerHTML = '<div class="param-title">' + p + '</div>' +
-                        '<div class="quality-criteria"><strong>Quality Criteria (C Class):</strong> ' + qualityRange + '</div>' +
-                        (paramInsights ? '<div class="param-insights"><strong>Parameter Insights:</strong> ' + paramInsights + '</div>' : '') +
-                        '<div id="time_' + pid + '" style="height:440px; margin-bottom:18px;"></div>' +
-                        '<div id="bar_' + pid + '" style="height:320px; margin-top:10px;"></div>';
-      fragment.appendChild(block);
-      blocks.push({ p, pid });
+    if (hasWQI) {
+        const wqiYearlyBlock = document.createElement('div');
+        wqiYearlyBlock.className = 'card param-block';
+        wqiYearlyBlock.innerHTML = `
+            <div class="param-title">WQI Yearly Trends</div>
+            <div class="quality-criteria"><strong>Quality Assessment:</strong> Excellent (<50), Good (50-100), Poor (100-200), Very Poor (200-300), Unsuitable (>300)</div>
+            <div id="wqi_yearly" style="height:400px; margin-bottom:18px;"></div>
+        `;
+        fragment.appendChild(wqiYearlyBlock);
     }
+
+    for(const p of params){
+        const pid = sanitizeId(p);
+        const block = document.createElement('div'); 
+        block.className = 'card param-block';
+
+        const qualityRange = QUALITY_RANGES[p] || `${p} `;
+
+        block.innerHTML = '<div class="param-title">' + p + '</div>' +
+                          '<div class="quality-criteria"><strong>Quality Criteria (C Class):</strong> ' + qualityRange + '</div>' +
+                          '<div id="time_' + pid + '" style="height:440px; margin-bottom:18px;"></div>' +
+                          '<div id="bar_' + pid + '" style="height:320px; margin-top:10px;"></div>';
+        fragment.appendChild(block);
+        blocks.push({ p, pid });
+    }
+
     container.appendChild(fragment);
+
     requestAnimationFrame(()=>{
-      for(const pb of blocks){
-        try{
-          renderTimeSeriesPerLocation('time_' + pb.pid, rows, pb.p);
-          renderBarAvg('bar_' + pb.pid, rows, pb.p);
-        }catch(err){
-          console.error('Error rendering param', pb.p, err);
-          const e = document.createElement('div'); e.textContent = 'Error rendering ' + pb.p; document.getElementById('chartsContainer').appendChild(e);
+        if (hasWQI) {
+            try {
+                renderWQIYearlyAvg('wqi_yearly', rows);
+            } catch(err) {
+                console.error('Error rendering WQI yearly chart', err);
+            }
         }
-      }
+
+        for(const pb of blocks){
+            try{
+                renderTimeSeriesPerLocation('time_' + pb.pid, rows, pb.p);
+                renderBarAvg('bar_' + pb.pid, rows, pb.p);
+            }catch(err){
+                console.error('Error rendering param', pb.p, err);
+            }
+        }
     });
+  }
+
+  function filterData(){
+    const selectedLocs = getTomValues(tomLoc);
+    const selectedMonths = getTomValues(tomMonth);
+    const selectedParams = getTomValues(tomParam);
+    const yrs = sliderDiv.noUiSlider.get().map(v=> Math.round(Number(v))); 
+    const [selYmin, selYmax] = yrs;
+
+    let rows = (DATA||[]).slice();
+
+    for (const userPoint of userAddedData) {
+      const completeRow = {
+        Date: userPoint.Date,
+        Location: userPoint.Location,
+        Year: userPoint.Year,
+        Month: userPoint.Month,
+        UserAdded: true
+      };
+      for (const param of PARAMS) {
+        completeRow[param] = userPoint[param] || null;
+      }
+      rows.push(completeRow);
+    }
+
+    if(selectedLocs.length) rows = rows.filter(r => r.Location && selectedLocs.includes(String(r.Location)));
+    if(selectedMonths.length) rows = rows.filter(r => r.Month && selectedMonths.includes(String(r.Month)));
+    rows = rows.filter(r => { 
+      if(r.Year===null||r.Year===undefined) return false; 
+      const y=Number(r.Year); 
+      if(isNaN(y)) return false; 
+      return y>=selYmin && y<=selYmax; 
+    });
+    const chosenParams = selectedParams.length ? selectedParams : (PARAMS.length ? [PARAMS[0]] : []);
+    return { rows, chosenParams };
+  }
+
+  // Updated KPI rendering to exclude 0 from WQI
+  function renderKPIs(rows, params){
+    const area = document.getElementById('kpisArea'); 
+    area.innerHTML='';
+    if(params.length >=6) document.body.classList.add('compact'); 
+    else document.body.classList.remove('compact');
+    if(!params || !params.length){ 
+      area.innerHTML = '<div class="kpi">No parameter</div>'; 
+      return; 
+    }
+    if(params.length === 1){
+      const p = params[0];
+      const vals = rows.map(r => getAnalysisValue(r[p], p)).filter(v => v !== null);
+      if(!vals.length){ 
+        area.innerHTML = '<div class="kpi">No valid values</div>'; 
+        return; 
+      }
+      const avg = vals.reduce((a,b)=>a+b,0)/vals.length;
+      area.innerHTML = '<div class="kpi"><div style="font-size:12px;color:#666">' + p + ' Avg</div><div style="font-weight:700">' + avg.toFixed(2) + '</div></div>' +
+                       '<div class="kpi"><div style="font-size:12px;color:#666">Min</div><div style="font-weight:700">' + Math.min(...vals).toFixed(2) + '</div></div>' +
+                       '<div class="kpi"><div style="font-size:12px;color:#666">Max</div><div style="font-weight:700">' + Math.max(...vals).toFixed(2) + '</div></div>' +
+                       '<div class="kpi"><div style="font-size:12px;color:#666">Valid Count</div><div style="font-weight:700">' + vals.length + '</div></div>';
+    } else {
+      area.innerHTML = '<div class="kpi"><div style="font-size:12px;color:#666">Params</div><div style="font-weight:700">' + params.length + '</div></div>' +
+                       '<div class="kpi"><div style="font-size:12px;color:#666">Rows</div><div style="font-weight:700">' + rows.length + '</div></div>';
+    }
+  }
+
+  // Rest of the functions (sidebar, events, etc.)
+  const sidebar = document.getElementById('sidebar');
+  const hideBtn = document.getElementById('hideBtn');
+  const floatingToggle = document.getElementById('sidebarToggle');
+  const mainEl = document.querySelector('.main');
+
+  function setSidebarVisible(visible){
+    if(visible){
+      sidebar.classList.remove('hidden'); 
+      floatingToggle.classList.add('hidden'); 
+      mainEl.classList.remove('fullwidth');
+    } else {
+      sidebar.classList.add('hidden'); 
+      floatingToggle.classList.remove('hidden'); 
+      mainEl.classList.add('fullwidth');
+    }
+    setTimeout(()=>{ 
+      document.querySelectorAll('.plotly-graph-div').forEach(g=>{ 
+        try{ Plotly.Plots.resize(g);}catch(e){} 
+      });
+      if (map) map.invalidateSize();
+    }, 150);
+  }
+  setSidebarVisible(true);
+  hideBtn.addEventListener('click', ()=> setSidebarVisible(false));
+  floatingToggle.addEventListener('click', ()=> setSidebarVisible(true));
+
+  document.getElementById('resetBtn').addEventListener('click', function(){
+    tomLoc.clear(); tomMonth.clear(); tomParam.clear(); preferDefaultParam(); sliderDiv.noUiSlider.set([yMin,yMax]); scheduleRender();
+  });
+  document.getElementById('applyReset').addEventListener('click', function(){
+    tomLoc.clear(); tomMonth.clear(); tomParam.clear(); preferDefaultParam(); sliderDiv.noUiSlider.set([yMin,yMax]); scheduleRender();
+  });
+
+  function selectAllTomBulk(ts, arr){
+    try{
+      const vals = (arr||[]).map(v => String(v));
+      if(typeof ts.setValue === 'function') ts.setValue(vals);
+      else { ts.clear(); for(const v of vals) ts.addItem(v); }
+    } catch(e){ console.warn('selectAllTomBulk error', e); }
+  }
+  function clearTomBulk(ts){ try{ if(typeof ts.clear === 'function') ts.clear(); else if(typeof ts.setValue === 'function') ts.setValue([]); }catch(e){} }
+
+  document.getElementById('selectAllLocations').addEventListener('click', ()=>{ selectAllTomBulk(tomLoc, LOCS); scheduleRender(); });
+  document.getElementById('clearLocations').addEventListener('click', ()=>{ clearTomBulk(tomLoc); scheduleRender(); });
+  document.getElementById('selectAllMonths').addEventListener('click', ()=>{ selectAllTomBulk(tomMonth, MONTHS); scheduleRender(); });
+  document.getElementById('clearMonths').addEventListener('click', ()=>{ clearTomBulk(tomMonth); scheduleRender(); });
+  document.getElementById('selectAllParams').addEventListener('click', ()=>{ selectAllTomBulk(tomParam, PARAMS); scheduleRender(); });
+  document.getElementById('clearParams').addEventListener('click', ()=>{ clearTomBulk(tomParam); preferDefaultParam(); scheduleRender(); });
+
+  function downloadCSV(rows){
+    if(!rows || !rows.length){ alert("No rows to download."); return; }
+    const keys = Object.keys(rows[0]);
+    const csvRows = [keys.join(",")];
+    for(const r of rows){
+      const line = keys.map(k=> { const v = r[k] === null || r[k] === undefined ? "" : String(r[k]).replace(/"/g,'""'); return `"${v}"`; }).join(",");
+      csvRows.push(line);
+    }
+    const blob = new Blob([csvRows.join("\\n")], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob); 
+    const a=document.createElement('a'); 
+    a.href=url; 
+    a.download='yamuna_filtered.csv'; 
+    document.body.appendChild(a); 
+    a.click(); 
+    a.remove(); 
+    URL.revokeObjectURL(url);
+  }
+  document.getElementById('downloadCsv').addEventListener('click', function(){ const {rows} = filterData(); downloadCSV(rows); });
+
+  function addDataPoint() {
+    const date = document.getElementById('inputDate').value;
+    const location = document.getElementById('inputLocation').value;
+    const parameter = document.getElementById('inputParameter').value;
+    const value = parseFloat(document.getElementById('inputValue').value);
+
+    if (!date || !location || !parameter || isNaN(value)) {
+      alert('Please fill in all fields with valid data.');
+      return;
+    }
+
+    const newPoint = {
+      Date: date,
+      Location: location,
+      [parameter]: value,
+      Year: new Date(date).getFullYear(),
+      Month: new Date(date).toLocaleString('default', { month: 'long' }),
+      UserAdded: true
+    };
+
+    userAddedData.push(newPoint);
+    clearForm();
+    scheduleRender();
+    alert(`Data point added successfully: ${parameter} = ${value} at ${location} on ${date}`);
+  }
+
+  function clearForm() {
+    document.getElementById('inputDate').value = '';
+    document.getElementById('inputLocation').value = '';
+    document.getElementById('inputParameter').value = '';
+    document.getElementById('inputValue').value = '';
+  }
+
+  document.getElementById('addDataBtn').addEventListener('click', addDataPoint);
+  document.getElementById('clearFormBtn').addEventListener('click', clearForm);
+
+  function switchView(view) {
+    currentView = view;
+    const chartsBtn = document.getElementById('chartsViewBtn');
+    const mapBtn = document.getElementById('mapViewBtn');
+    const chartsContainer = document.getElementById('chartsContainer');
+    const mapContainer = document.getElementById('mapContainer');
+    const noMapMessage = document.getElementById('noMapMessage');
+
+    if (view === 'charts') {
+      chartsBtn.classList.add('active');
+      mapBtn.classList.remove('active');
+      chartsContainer.style.display = 'block';
+      mapContainer.style.display = 'none';
+      noMapMessage.style.display = 'none';
+
+      setTimeout(() => {
+        document.querySelectorAll('.plotly-graph-div').forEach(g => {
+          try { Plotly.Plots.resize(g); } catch(e) {}
+        });
+      }, 100);
+    }
+  }
+
+  document.getElementById('chartsViewBtn').addEventListener('click', () => switchView('charts'));
+
+  let renderTimer_js = null;
+  function scheduleRender(ms = 200){
+    if(renderTimer_js) clearTimeout(renderTimer_js);
+    renderTimer_js = setTimeout(()=>{ renderAll(); renderTimer_js = null; }, ms);
   }
 
   function renderAll(){
@@ -1743,16 +1371,20 @@ insights.push(`<div class="insight-box ${complianceClass}"><strong>Compliance Ra
     document.getElementById('recCount').textContent = rows.length;
     renderKPIs(rows, chosenParams);
     renderInsights(rows, chosenParams);
-    renderTable(rows, chosenParams);
-
-    if (currentView === 'charts') {
-      renderChartsForParams(rows, chosenParams);
-    } else if (currentView === 'maps') {
-      updateMapMarkers();
-    }
+    renderChartsForParams(rows, chosenParams);
   }
 
-  // initial render scheduling
+  function renderInsights(rows, params) {
+    const insights = generateInsights(rows, params);
+    document.getElementById('insightsArea').innerHTML = insights.join('');
+  }
+
+  tomLoc.on('change', ()=> scheduleRender());
+  tomMonth.on('change', ()=> scheduleRender());
+  tomParam.on('change', ()=> scheduleRender());
+  sliderDiv.noUiSlider.on('change', ()=> scheduleRender());
+  document.getElementById('monthlyAvgToggle').addEventListener('change', ()=> scheduleRender());
+
   scheduleRender(250);
   window.refreshDashboard = function(){ scheduleRender(0); };
 });
@@ -1790,12 +1422,11 @@ def main():
         print("No numeric parameters found. Exiting.")
         sys.exit(1)
 
-    # Check for coordinate availability
     has_coords, location_coords = check_coordinates_availability(df)
 
     if has_coords:
         print(f"Found coordinates for {len(location_coords)} locations")
-        for loc, coords in list(location_coords.items())[:5]:  # Show first 5
+        for loc, coords in list(location_coords.items())[:5]:
             print(f"  {loc}: {coords['lat']:.4f}, {coords['lng']:.4f}")
         if len(location_coords) > 5:
             print(f"  ... and {len(location_coords) - 5} more locations")
