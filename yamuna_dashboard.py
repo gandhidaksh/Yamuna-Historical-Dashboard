@@ -154,8 +154,6 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# Rest of the functions remain the same until get_numeric_params...
-
 def prepare_json_rows(df: pd.DataFrame):
     def convert(v):
         if pd.isna(v):
@@ -275,7 +273,7 @@ def build_html(data_rows, months, params, locations, years, location_coords, out
     years_json = dump_safe(years)
     coords_json = dump_safe(location_coords)
 
-    # Full HTML template with updated JavaScript to exclude 0 from WQI analysis
+    # Full HTML template with FIXED JavaScript for map functionality
     html_template = '''<!doctype html>
 <html lang="en">
 <head>
@@ -656,6 +654,167 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
   preferDefaultParam();
+
+  // Initialize map
+  function initializeMap() {
+    if (map) {
+      map.remove();
+    }
+
+    map = L.map('mapContainer').setView([28.6139, 77.2090], 10);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    return map;
+  }
+
+  // Render map with data
+  function renderMap(rows, selectedParams) {
+    if (!HAS_COORDINATES) {
+      document.getElementById('noMapMessage').style.display = 'block';
+      document.getElementById('mapContainer').style.display = 'none';
+      return;
+    }
+
+    document.getElementById('noMapMessage').style.display = 'none';
+    document.getElementById('mapContainer').style.display = 'block';
+
+    if (!map) {
+      initializeMap();
+    }
+
+    // Clear existing markers
+    map.eachLayer(function(layer) {
+      if (layer instanceof L.Marker) {
+        map.removeLayer(layer);
+      }
+    });
+
+    // Group data by location
+    const locationData = {};
+    rows.forEach(row => {
+      const loc = row.Location;
+      if (!loc || !LOCATION_COORDS[loc]) return;
+
+      if (!locationData[loc]) {
+        locationData[loc] = {
+          coords: LOCATION_COORDS[loc],
+          measurements: []
+        };
+      }
+
+      const measurement = {
+        date: row.Date,
+        year: row.Year,
+        month: row.Month
+      };
+
+      selectedParams.forEach(param => {
+        const val = getDisplayValue(row[param]);
+        if (val !== null) {
+          measurement[param] = val;
+        }
+      });
+
+      locationData[loc].measurements.push(measurement);
+    });
+
+    // Add markers for each location
+    Object.keys(locationData).forEach(locationName => {
+      const locData = locationData[locationName];
+      const coords = locData.coords;
+
+      // Calculate averages for selected parameters
+      const paramAverages = {};
+      selectedParams.forEach(param => {
+        const values = locData.measurements
+          .map(m => getAnalysisValue(m[param], param))
+          .filter(v => v !== null);
+
+        if (values.length > 0) {
+          paramAverages[param] = {
+            avg: values.reduce((a, b) => a + b, 0) / values.length,
+            count: values.length,
+            min: Math.min(...values),
+            max: Math.max(...values)
+          };
+        }
+      });
+
+      // Determine marker color based on WQI if available
+      let markerColor = '#3388ff'; // default blue
+      if (paramAverages.WQI) {
+        const wqi = paramAverages.WQI.avg;
+        if (wqi < 50) markerColor = '#059669';
+        else if (wqi < 100) markerColor = '#0891b2';
+        else if (wqi < 200) markerColor = '#f59e0b';
+        else if (wqi < 300) markerColor = '#ef4444';
+        else markerColor = '#7c2d12';
+      }
+
+      // Create custom icon
+      const icon = L.divIcon({
+        className: 'custom-marker',
+        html: `<div style="background-color: ${markerColor}; width: 20px; height: 20px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10]
+      });
+
+      // Create popup content
+      let popupContent = `<div class="popup-content">
+      <h4>${locationName}</h4>
+      <div style="font-size: 11px; color: #666; margin-bottom: 8px;">
+    📍 Lat: ${coords.lat.toFixed(6)}, Long: ${coords.lng.toFixed(6)}
+     </div>
+        <table>`;
+
+      if (Object.keys(paramAverages).length > 0) {
+        Object.keys(paramAverages).forEach(param => {
+          const data = paramAverages[param];
+          popupContent += `
+            <tr>
+              <td class="param-name">${param}:</td>
+              <td>${data.avg.toFixed(2)} (avg)</td>
+            </tr>
+            <tr>
+              <td></td>
+              <td style="font-size: 11px; color: #666;">
+                Min: ${data.min.toFixed(2)}, Max: ${data.max.toFixed(2)}<br>
+                ${data.count} measurements
+              </td>
+            </tr>`;
+        });
+      } else {
+        popupContent += `<tr><td colspan="2">No data for selected parameters</td></tr>`;
+      }
+
+      popupContent += `</table>
+        <div style="margin-top: 8px; font-size: 11px; color: #666;">
+          Total measurements: ${locData.measurements.length}
+        </div>
+      </div>`;
+
+      // Add marker to map
+      const marker = L.marker([coords.lat, coords.lng], { icon: icon })
+        .bindPopup(popupContent)
+        .addTo(map);
+    });
+
+    // Fit map bounds to show all markers
+    const allCoords = Object.values(locationData).map(d => d.coords);
+    if (allCoords.length > 0) {
+      const latLngs = allCoords.map(c => [c.lat, c.lng]);
+      const bounds = L.latLngBounds(latLngs);
+      map.fitBounds(bounds, { padding: [20, 20] });
+    }
+
+    // Refresh map size
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 100);
+  }
 
   // Add WQI Yearly Chart Function
   function renderWQIYearlyAvg(containerId, rows) {
@@ -1229,7 +1388,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  // Rest of the functions (sidebar, events, etc.)
+  // Sidebar and UI controls
   const sidebar = document.getElementById('sidebar');
   const hideBtn = document.getElementById('hideBtn');
   const floatingToggle = document.getElementById('sidebarToggle');
@@ -1335,6 +1494,7 @@ document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('addDataBtn').addEventListener('click', addDataPoint);
   document.getElementById('clearFormBtn').addEventListener('click', clearForm);
 
+  // FIXED: View switching function
   function switchView(view) {
     currentView = view;
     const chartsBtn = document.getElementById('chartsViewBtn');
@@ -1355,10 +1515,27 @@ document.addEventListener('DOMContentLoaded', function() {
           try { Plotly.Plots.resize(g); } catch(e) {}
         });
       }, 100);
+    } else if (view === 'map') {
+      chartsBtn.classList.remove('active');
+      mapBtn.classList.add('active');
+      chartsContainer.style.display = 'none';
+
+      if (!HAS_COORDINATES) {
+        noMapMessage.style.display = 'block';
+        mapContainer.style.display = 'none';
+      } else {
+        noMapMessage.style.display = 'none';
+        mapContainer.style.display = 'block';
+
+        // Render map with current data
+        const { rows, chosenParams } = filterData();
+        renderMap(rows, chosenParams);
+      }
     }
   }
 
   document.getElementById('chartsViewBtn').addEventListener('click', () => switchView('charts'));
+  document.getElementById('mapViewBtn').addEventListener('click', () => switchView('map'));
 
   let renderTimer_js = null;
   function scheduleRender(ms = 200){
@@ -1371,7 +1548,12 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('recCount').textContent = rows.length;
     renderKPIs(rows, chosenParams);
     renderInsights(rows, chosenParams);
-    renderChartsForParams(rows, chosenParams);
+
+    if (currentView === 'charts') {
+      renderChartsForParams(rows, chosenParams);
+    } else if (currentView === 'map') {
+      renderMap(rows, chosenParams);
+    }
   }
 
   function renderInsights(rows, params) {
