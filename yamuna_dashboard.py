@@ -1387,23 +1387,23 @@ document.addEventListener('DOMContentLoaded', function() {
     html += '</div>';
 
     // Step 5: Contributions
-    html += '<div class="wqi-calculation-section">';
-    html += '<div class="calc-section-title">Step 5: Calculate Weighted Contributions</div>';
-    html += '<div class="wqi-breakdown-table"><table>';
-    html += '<thead><tr>';
-    html += '<th>Parameter</th><th>Contribution Formula</th><th>Contribution</th><th>% Impact</th>';
-    html += '</tr></thead><tbody>';
-    sortedParams.forEach(param => {
-      const badgeClass = `param-badge-${param.name}`;
-      html += '<tr>';
-      html += `<td><span class="param-badge ${badgeClass}">${param.name}</span></td>`;
-      html += `<td><div class="formula-display" style="margin:4px 0;">${param.contrib_formula}</div></td>`;
-      html += `<td><strong>${param.contribution.toFixed(2)}</strong></td>`;
-      html += `<td><div class="contribution-bar" style="width:${Math.min(100, param.contributionPercent)}%">${param.contributionPercent.toFixed(1)}%</div></td>`;
-      html += '</tr>';
-    });
-    html += '</tbody></table></div>';
-    html += '</div>';
+html += '<div class="wqi-calculation-section">';
+html += '<div class="calc-section-title">Step 5: Calculate Weighted Contributions</div>';
+html += '<div class="wqi-breakdown-table"><table>';
+html += '<thead><tr>';
+html += '<th>Parameter</th><th>Contribution Formula</th><th>Contribution</th><th>% Impact</th>';
+html += '</tr></thead><tbody>';
+sortedParams.forEach(param => {
+  const badgeClass = `param-badge-${param.name}`;
+  html += '<tr>';
+  html += `<td><span class="param-badge ${badgeClass}">${param.name}</span></td>`;
+  html += `<td><div class="formula-display" style="margin:4px 0;">${param.contrib_formula}</div></td>`;
+  html += `<td><strong>${param.contribution.toFixed(2)}</strong></td>`;
+  html += `<td><div style="display: inline-block; padding: 8px 16px; background: #e0f2fe; border: 2px solid #0284c7; border-radius: 8px; font-size: 13px; font-weight: 700; color: #0284c7;">${param.contributionPercent.toFixed(1)}%</div></td>`;
+  html += '</tr>';
+});
+html += '</tbody></table></div>';
+html += '</div>';
 
     // Final WQI Calculation
     html += '<div class="wqi-calculation-section">';
