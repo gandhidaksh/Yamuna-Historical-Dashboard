@@ -1118,29 +1118,7 @@ html,body,#chartsContainer{width:100%; height:100%; overflow-x:hidden;}
       </div>
     </div>
     
-    <div class="card">
-      <div class="param-title">Add New Data Entry</div>
-      <div class="form-row">
-        <div class="form-field">
-          <label>Date</label>
-          <input type="date" id="inputDate">
-        </div>
-        <div class="form-field">
-          <label>Location</label>
-          <select id="inputLocation"><option value="">Select location...</option></select>
-        </div>
-        <div class="form-field">
-          <label>Parameter</label>
-          <select id="inputParameter"><option value="">Select parameter...</option></select>
-        </div>
-        <div class="form-field">
-          <label>Value</label>
-          <input type="number" id="inputValue" step="0.01" placeholder="Enter value">
-        </div>
-      </div>
-      <button id="addDataBtn" class="btn" style="margin-right:8px;">Add Data Point</button>
-      <button id="clearFormBtn" class="small-btn">Clear Form</button>
-    </div>
+    
 
     <div class="card">
       <div class="view-toggle">
@@ -1177,7 +1155,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
   const HAS_COORDINATES = Object.keys(LOCATION_COORDS).length > 0;
 
-  let userAddedData = [];
   let map = null;
   let currentView = 'charts';
 
@@ -1543,9 +1520,7 @@ function isNilValue(val) {
   safeAddOptions(document.getElementById('selMonth'), MONTHS);
   safeAddOptions(document.getElementById('selYear'), YEARS);
   safeAddOptions(document.getElementById('selParam'), PARAMS);
-  safeAddOptions(document.getElementById('inputLocation'), LOCS);
-  safeAddOptions(document.getElementById('inputParameter'), PARAMS);
-
+  
   const tomLoc = new TomSelect('#selLocation', { plugins:['remove_button'], create:false, placeholder:'Choose locations...', hideSelected:true });
   const tomMonth = new TomSelect('#selMonth', { plugins:['remove_button'], create:false, placeholder:'Choose months...', hideSelected:true });
   const tomYear = new TomSelect('#selYear', { plugins:['remove_button'], create:false, placeholder:'Choose years...', hideSelected:true });
@@ -1896,16 +1871,12 @@ function isNilValue(val) {
     }
 
     const uniqueLocations = [...new Set(rows.map(r => r.Location))];
-    const userAddedCount = rows.filter(r => r.UserAdded).length;
     const yearRange = [...new Set(rows.map(r => r.Year).filter(y => y))];
     const minYear = Math.min(...yearRange);
     const maxYear = Math.max(...yearRange);
 
     let coverageText = `Data spans <strong>${maxYear - minYear + 1} years</strong> (${minYear}-${maxYear}) across <strong>${uniqueLocations.length} locations</strong> with <strong>${rows.length} measurements</strong>`;
-    if (userAddedCount > 0) {
-      coverageText += ` (including ${userAddedCount} user-added points)`;
-    }
-    insights.push(`<div class="insight-box">${coverageText}</div>`);
+     insights.push(`<div class="insight-box">${coverageText}</div>`);
 
     if (params.length === 1 && yearRange.length >= 2) {
       const param = params[0];
@@ -2332,20 +2303,6 @@ function isNilValue(val) {
 
     let rows = (DATA||[]).slice();
 
-    for (const userPoint of userAddedData) {
-      const completeRow = {
-        Date: userPoint.Date,
-        Location: userPoint.Location,
-        Year: userPoint.Year,
-        Month: userPoint.Month,
-        UserAdded: true
-      };
-      for (const param of PARAMS) {
-        completeRow[param] = userPoint[param] || null;
-      }
-      rows.push(completeRow);
-    }
-
     if(selectedLocs.length) rows = rows.filter(r => r.Location && selectedLocs.includes(String(r.Location)));
     if(selectedMonths.length) rows = rows.filter(r => r.Month && selectedMonths.includes(String(r.Month)));
     if(selectedYears.length) rows = rows.filter(r => r.Year && selectedYears.includes(String(r.Year)));
@@ -2452,42 +2409,7 @@ function isNilValue(val) {
   }
   document.getElementById('downloadCsv').addEventListener('click', function(){ const {rows} = filterData(); downloadCSV(rows); });
 
-  function addDataPoint() {
-    const date = document.getElementById('inputDate').value;
-    const location = document.getElementById('inputLocation').value;
-    const parameter = document.getElementById('inputParameter').value;
-    const value = parseFloat(document.getElementById('inputValue').value);
-
-    if (!date || !location || !parameter || isNaN(value)) {
-      alert('Please fill in all fields with valid data.');
-      return;
-    }
-
-    const newPoint = {
-      Date: date,
-      Location: location,
-      [parameter]: value,
-      Year: new Date(date).getFullYear(),
-      Month: new Date(date).toLocaleString('default', { month: 'long' }),
-      UserAdded: true
-    };
-
-    userAddedData.push(newPoint);
-    clearForm();
-    scheduleRender();
-    alert(`Data point added successfully: ${parameter} = ${value} at ${location} on ${date}`);
-  }
-
-  function clearForm() {
-    document.getElementById('inputDate').value = '';
-    document.getElementById('inputLocation').value = '';
-    document.getElementById('inputParameter').value = '';
-    document.getElementById('inputValue').value = '';
-  }
-
-  document.getElementById('addDataBtn').addEventListener('click', addDataPoint);
-  document.getElementById('clearFormBtn').addEventListener('click', clearForm);
-
+  
   function switchView(view) {
     currentView = view;
     const chartsBtn = document.getElementById('chartsViewBtn');
@@ -2968,28 +2890,81 @@ function calculateStreeterPhelps(BOD1, DO1, BOD2, DO2, tempDays = 1) {
           but actual measured DO is <strong>${spModel.actualDO.toFixed(2)} mg/L</strong> 
           (difference: <strong>${Math.abs(spModel.actualDO - spModel.predictedDO).toFixed(2)} mg/L</strong>).<br><br>
           
-          ${spModel.actualDO < spModel.predictedDO - 0.5
-            ? `<span style="color: #dc2626;">⚠️ <strong>Actual DO is significantly LOWER than predicted</strong> - This indicates:<br>
-               • Additional oxygen-consuming pollutants not accounted for in the model<br>
-               • Reaeration rate may be overestimated (actual k₂ < ${spModel.k2})<br>
-               • Possible sediment oxygen demand or other oxygen sinks<br>
-               • The river's self-purification capacity is insufficient</span>`
-            : spModel.actualDO > spModel.predictedDO + 0.5
-            ? `<span style="color: #059669;">✓ <strong>Actual DO is HIGHER than predicted</strong> - This suggests:<br>
-               • Stronger reaeration than modeled (actual k₂ > ${spModel.k2})<br>
-               • Possible algal photosynthesis contributing oxygen<br>
-               • Less oxygen consumption than expected<br>
-               • River is recovering better than the model predicts</span>`
-            : `<span style="color: #059669;">✓ <strong>Good model agreement</strong> - The Streeter-Phelps model accurately represents oxygen dynamics between these points.</span>`
-          }<br><br>
+         ${(() => {
+            const bodChange = p2.BOD - p1.BOD;
+            const bodChangePercent = ((bodChange / p1.BOD) * 100);
+            const doChange = p2.DO - p1.DO;
+            
+            if (bodChange > p1.BOD * 0.5) {
+              return `<span style="color: #dc2626;">⚠️ <strong>BOD increased dramatically (${bodChangePercent.toFixed(0)}%)</strong> between measurement points<br><br>
+              
+              <strong>Why didn't DO increase despite positive net rates at both points?</strong><br><br>
+              
+              The Streeter-Phelps model calculates <strong>instantaneous rates at each measurement point</strong>, but doesn't account for 
+              <strong>pollution added between the points</strong>. Here's what happened:<br><br>
+              
+              1️⃣ <strong>At Point 1:</strong> Water is recovering (net +${(spModel.rearationRate - spModel.deoxygenationRate).toFixed(3)} mg/L/day). 
+              As this water flows downstream, DO <em>should</em> increase.<br><br>
+              
+              2️⃣ <strong>Between Points:</strong> <strong style="color:#991b1b;">NEW POLLUTION SOURCE</strong> added ${bodChange.toFixed(2)} mg/L of BOD. 
+              This fresh organic load immediately consumed oxygen, offsetting any recovery from Point 1.<br><br>
+              
+              3️⃣ <strong>At Point 2:</strong> The "snapshot" rates show recovery potential (net +${((spModel.k2 * (spModel.DOsat - p2.DO)) - (spModel.k1 * p2.BOD)).toFixed(3)} mg/L/day), 
+              but this only tells us what's happening <em>right now at Point 2</em> - it doesn't reflect the oxygen already consumed by the pollution spike.<br><br>
+              
+              <strong>Bottom Line:</strong> The oxygen consumed by the ${bodChange.toFixed(2)} mg/L BOD increase between points 
+              <strong>canceled out</strong> the natural reaeration that occurred. Think of it as: the river was healing (+${(spModel.rearationRate - spModel.deoxygenationRate).toFixed(1)} mg/L/day at Point 1), 
+              but then got a fresh wound (new pollution) that consumed all the healing progress.</span>`;
+            }
+            
+            if (spModel.actualDO < spModel.predictedDO - 0.5) {
+              return `<span style="color: #dc2626;">⚠️ <strong>Actual DO is significantly LOWER than predicted</strong> - This indicates:<br>
+              • Additional oxygen-consuming pollutants not accounted for in the model<br>
+              • Reaeration rate may be overestimated (actual k₂ < ${spModel.k2})<br>
+              • Possible sediment oxygen demand or other oxygen sinks<br>
+              • The river's self-purification capacity is insufficient</span>`;
+            } else if (spModel.actualDO > spModel.predictedDO + 0.5) {
+              return `<span style="color: #059669;">✓ <strong>Actual DO is HIGHER than predicted</strong> - This suggests:<br>
+              • Stronger reaeration than modeled (actual k₂ > ${spModel.k2})<br>
+              • Possible algal photosynthesis contributing oxygen<br>
+              • Less oxygen consumption than expected<br>
+              • River is recovering better than the model predicts</span>`;
+            } else {
+              return `<span style="color: #059669;">✓ <strong>Good model agreement</strong> - The Streeter-Phelps model accurately represents oxygen dynamics between these points.</span>`;
+            }
+          })()}<br><br>
           
-          <strong>Process Analysis (at Point 1):</strong><br>
-          • Deoxygenation rate: <strong>${spModel.deoxygenationRate.toFixed(3)} mg/L/day</strong><br>
-          • Reaeration rate: <strong>${spModel.rearationRate.toFixed(3)} mg/L/day</strong><br>
-          • Net effect: <strong>${(spModel.rearationRate - spModel.deoxygenationRate).toFixed(3)} mg/L/day</strong>
-          ${spModel.rearationRate > spModel.deoxygenationRate 
-            ? ` (reaeration > deoxygenation)`
-            : ` (deoxygenation > reaeration)`
+          <strong>Process Analysis Comparison:</strong><br>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px;">
+            <div style="background: #f0f9ff; padding: 10px; border-radius: 6px; border-left: 3px solid #0284c7;">
+              <div style="font-weight: 600; margin-bottom: 6px;">📍 Point 1 Rates</div>
+              • Deoxygenation: <strong>${spModel.deoxygenationRate.toFixed(3)} mg/L/day</strong><br>
+              • Reaeration: <strong>${spModel.rearationRate.toFixed(3)} mg/L/day</strong><br>
+              • Net: <strong>${(spModel.rearationRate - spModel.deoxygenationRate).toFixed(3)} mg/L/day</strong>
+              ${spModel.rearationRate > spModel.deoxygenationRate ? ' ✓' : ' ✗'}
+            </div>
+            
+            <div style="background: ${p2.BOD > p1.BOD ? '#fef2f2' : '#ecfdf5'}; padding: 10px; border-radius: 6px; border-left: 3px solid ${p2.BOD > p1.BOD ? '#ef4444' : '#10b981'};">
+              <div style="font-weight: 600; margin-bottom: 6px;">📍 Point 2 Rates (calculated)</div>
+              • Deoxygenation: <strong>${(spModel.k1 * p2.BOD).toFixed(3)} mg/L/day</strong><br>
+              • Reaeration: <strong>${(spModel.k2 * (spModel.DOsat - p2.DO)).toFixed(3)} mg/L/day</strong><br>
+              • Net: <strong>${((spModel.k2 * (spModel.DOsat - p2.DO)) - (spModel.k1 * p2.BOD)).toFixed(3)} mg/L/day</strong>
+              ${(() => {
+  const p2Net = (spModel.k2 * (spModel.DOsat - p2.DO)) - (spModel.k1 * p2.BOD);
+  const actualDOChange = p2.DO - p1.DO;
+  if (p2Net > 0.1 && actualDOChange > 0) return ' ✓';
+  if (p2Net < -0.1) return ' ✗';
+  if (p2Net > 0 && actualDOChange <= 0) return ' ⚠️';
+  return '';
+})()}
+            </div>
+          </div>
+          <br>
+          ${p2.BOD > p1.BOD * 1.5 
+            ? `<span style="color: #dc2626;"><strong>⚠️ Critical Finding:</strong> Deoxygenation rate increased by 
+               <strong>${(((spModel.k1 * p2.BOD) - spModel.deoxygenationRate) / spModel.deoxygenationRate * 100).toFixed(0)}%</strong> 
+               at Point 2, overwhelming the reaeration capacity. This confirms new pollution entered between measurement points.</span><br>`
+            : ''
           }
         </div>
       </div>
