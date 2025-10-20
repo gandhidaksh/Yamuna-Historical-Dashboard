@@ -20,4 +20,4 @@ Interactive dashboard for analyzing Yamuna River water quality data.
 [View Live Dashboard](https://gandhidaksh.github.io/Yamuna-Historical-Dashboard/yamuna_dashboard.html)
 
 ## Data
-Based on Yamuna Report V3.0 data covering multiple monitoring locations.
+Based on Yamuna Report V4.0 data covering multiple monitoring locations.
