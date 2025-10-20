@@ -1047,7 +1047,7 @@ html,body,#chartsContainer{width:100%; height:100%; overflow-x:hidden;}
 </style>
 </head>
 <body>
-<div class="header"><h1>🌊 Yamuna Water Quality - Enhanced WQI Calculator Dashboard</h1></div>
+<div class="header"><h1>🌊 Yamuna Water Quality - WQI Calculator Dashboard</h1></div>
 
 <button id="sidebarToggle" class="floating-toggle hidden" title="Show / hide controls">☰ Controls</button>
 
