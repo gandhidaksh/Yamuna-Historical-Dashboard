@@ -2740,7 +2740,14 @@ function calculateStreeterPhelps(BOD1, DO1, BOD2, DO2, tempDays = 1) {
     const changeVerb = wqiChange > 0 ? 'increased (worsened)' : 'decreased (improved)';
     const changeIcon = wqiChange > 0 ? '📈' : '📉';
     // Calculate Streeter-Phelps for DO analysis
-    const spModel = calculateStreeterPhelps(p1.BOD, p1.DO, p2.BOD, p2.DO);
+   // Check if Streeter-Phelps model applies (different locations, same time period)
+const canApplyStreeterPhelps = (p1.location !== p2.location) && 
+                                (p1.year === p2.year) && 
+                                (p1.month === p2.month);
+
+const spModel = canApplyStreeterPhelps ? 
+                calculateStreeterPhelps(p1.BOD, p1.DO, p2.BOD, p2.DO) : 
+                null;
     let html = `
       <div class="results-header">
         ${changeIcon} WQI Comparison Results
@@ -2794,7 +2801,7 @@ function calculateStreeterPhelps(BOD1, DO1, BOD2, DO2, tempDays = 1) {
           
           <div style="flex: 1;">
             <div style="display: inline-block; padding: 10px 20px; background: #e0f2fe; border: 2px solid #0284c7; border-radius: 8px; font-size: 14px; font-weight: 700; color: #0284c7;">
-              ${contrib.percentOfChange.toFixed(1)}% of change
+              ${contrib.percentOfChange.toFixed(1)}% of change in WQI
             </div>
           </div>
         </div>
@@ -2806,10 +2813,11 @@ function calculateStreeterPhelps(BOD1, DO1, BOD2, DO2, tempDays = 1) {
     // ========================================
     // STREETER-PHELPS ANALYSIS SECTION
     // ========================================
+    if (spModel) {
     html += `
       <div class="wqi-calculation-section" style="background: linear-gradient(135deg, #e0f2fe, #dbeafe); border: 2px solid #0284c7; margin-top: 20px;">
         <div class="calc-section-title" style="color: #0c4a6e; font-size: 16px;">
-          🌊 Streeter-Phelps Dissolved Oxygen Model
+           Streeter-Phelps Dissolved Oxygen Model
         </div>
         
         <div style="background: white; padding: 14px; border-radius: 8px; margin-bottom: 12px;">
@@ -2971,7 +2979,25 @@ function calculateStreeterPhelps(BOD1, DO1, BOD2, DO2, tempDays = 1) {
         </div>
       </div>
     `;
-    
+    } else {
+  html += `
+    <div style="background: #fef3c7; padding: 16px; border-radius: 8px; border-left: 4px solid #f59e0b; margin-top: 20px;">
+      <strong>ℹ️ Streeter-Phelps Model Not Applicable</strong><br><br>
+      <div style="font-size: 13px; color: #78350f; line-height: 1.6;">
+        The Streeter-Phelps equation models oxygen dynamics along a river flow path and can only be applied when comparing 
+        <strong>two different locations</strong> (spatial comparison) during the <strong>same time period</strong> (same month and year).<br><br>
+        
+        <strong>Current comparison:</strong><br>
+        • Point 1: ${p1.location}, ${p1.month} ${p1.year}<br>
+        • Point 2: ${p2.location}, ${p2.month} ${p2.year}<br><br>
+        
+        ${p1.location === p2.location ? 
+          '❌ <strong>Same location</strong> - Cannot model river flow between identical points' : 
+          '❌ <strong>Different time periods</strong> - Cannot predict DO changes across months/years'}
+      </div>
+    </div>
+  `;
+}
     // Interpretation
     const mainContributor = contributions[0];
     const mainContribSign = mainContributor.valueChange > 0 ? 'increased' : 'decreased';
