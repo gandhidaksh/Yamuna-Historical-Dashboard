@@ -2719,7 +2719,7 @@ function calculateStreeterPhelps(BOD1, DO1, BOD2, DO2, tempDays = 1) {
         point1Contribution: param1.contribution,
         point2Contribution: param2.contribution,
         contributionChange: contributionChange,
-        percentOfChange: Math.abs(percentOfTotalChange),
+        percentOfChange: percentOfTotalChange,  // ← Keep the sign!
         valueChange: param2.measured - param1.measured,
         valueChangePercent: ((param2.measured - param1.measured) / param1.measured) * 100
       });
