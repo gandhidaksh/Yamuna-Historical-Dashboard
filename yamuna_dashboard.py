@@ -529,13 +529,13 @@ html,body,#chartsContainer{width:100%; height:100%; overflow-x:hidden;}
   font-weight: 600;
   text-align: left;
   padding: 12px;
-  font-size: 13px;
+  font-size: 14px;
   border-bottom: 2px solid #eab308;
 }
 .wqi-breakdown-table td {
   padding: 12px;
   border-bottom: 1px solid #fafaf9;
-  font-size: 13px;
+  font-size: 14px;
 }
 .wqi-breakdown-table tr:last-child td {
   border-bottom: none;
@@ -559,7 +559,7 @@ html,body,#chartsContainer{width:100%; height:100%; overflow-x:hidden;}
   padding: 10px 12px;
   border-radius: 6px;
   font-family: 'Courier New', monospace;
-  font-size: 12px;
+  font-size: 13px;
   color: #57534e;
   border-left: 3px solid #eab308;
   margin: 8px 0;
@@ -1703,7 +1703,9 @@ function isNilValue(val) {
         { type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 0, y1: 50, fillcolor: '#059669' + '80', line: {width: 0}, layer: 'below' },
         { type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 50, y1: 100, fillcolor: '#0891b2' + '80', line: {width: 0}, layer: 'below' },
         { type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 100, y1: 200, fillcolor: '#f59e0b' + '80', line: {width: 0}, layer: 'below' },
-        { type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 200, y1: 300, fillcolor: '#ef4444' + '80', line: {width: 0}, layer: 'below' }
+        { type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 200, y1: 300, fillcolor: '#ef4444' + '80', line: {width: 0}, layer: 'below' },
+        // ADD THIS LINE - Deep red background for above 300
+        { type: 'rect', xref: 'paper', x0: 0, x1: 1, yref: 'y', y0: 300, y1: 10000, fillcolor: '#7f1d1d' + '80', line: {width: 0}, layer: 'below' },
     ];
 
     const annotations = [];
@@ -2817,12 +2819,12 @@ function calculateStreeterPhelps(BOD1, DO1, BOD2, DO2, tempDays = 1) {
           </div>
           
           <div class="formula-display" style="background: #f8fafc; padding: 12px; border-radius: 6px; margin: 12px 0;">
-            <strong>Streeter-Phelps Equation:</strong><br>
-            D<sub>t</sub> = (k₁ × L₀)/(k₂ - k₁) × [e<sup>-k₁t</sup> - e<sup>-k₂t</sup>] + D₀ × e<sup>-k₂t</sup><br><br>
-            <span style="font-size: 11px; color: #64748b;">
-              where: D<sub>t</sub> = DO deficit at time t, k₁ = deoxygenation rate, k₂ = reaeration rate, L₀ = initial BOD
-            </span>
-          </div>
+  <strong style="font-size: 15px;">Streeter-Phelps Equation:</strong><br>
+  <span style="font-size: 15px;">D<sub>t</sub> = (k₁ × L₀)/(k₂ - k₁) × [e<sup>-k₁t</sup> - e<sup>-k₂t</sup>] + D₀ × e<sup>-k₂t</sup></span><br><br>
+  <span style="font-size: 14px; color: #64748b;">
+    where: D<sub>t</sub> = DO deficit at time t, k₁ = deoxygenation rate, k₂ = reaeration rate, L₀ = initial BOD
+  </span>
+</div>
         </div>
         
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
