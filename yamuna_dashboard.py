@@ -1802,16 +1802,12 @@ function isNilValue(val) {
       else isImproving = overallChange < 0;
 
       if (isImproving) {
-        trendText = Math.abs(overallChange) > 20 
-          ? `Significant improvement in ${param} from ${firstYear} to ${lastYear} (${Math.abs(overallChange).toFixed(1)}% ${overallChange > 0 ? 'increase' : 'decrease'})`
-          : `Moderate improvement in ${param} from ${firstYear} to ${lastYear} (${Math.abs(overallChange).toFixed(1)}% ${overallChange > 0 ? 'increase' : 'decrease'})`;
-        trendClass = 'positive-insight';
-      } else {
-        trendText = Math.abs(overallChange) > 20
-          ? `Significant deterioration in ${param} from ${firstYear} to ${lastYear} (${Math.abs(overallChange).toFixed(1)}% ${overallChange > 0 ? 'increase' : 'decrease'})`
-          : `Moderate deterioration in ${param} from ${firstYear} to ${lastYear} (${Math.abs(overallChange).toFixed(1)}% ${overallChange > 0 ? 'increase' : 'decrease'})`;
-        trendClass = overallChange > 20 ? 'critical-insight' : 'warning-insight';
-      }
+  trendText = `Water quality improved from ${firstYear} to ${lastYear} (${param} ${overallChange > 0 ? 'increased' : 'decreased'} by ${Math.abs(overallChange).toFixed(1)}%)`;
+  trendClass = 'positive-insight';
+} else {
+  trendText = `Water quality declined from ${firstYear} to ${lastYear} (${param} ${overallChange > 0 ? 'increased' : 'decreased'} by ${Math.abs(overallChange).toFixed(1)}%)`;
+  trendClass = overallChange > 20 ? 'critical-insight' : 'warning-insight';
+}
     }
 
     if (bestYear !== worstYear) {
@@ -1886,13 +1882,7 @@ function isNilValue(val) {
       if (yearlyAnalysis) {
         insights.push(`<div class="insight-box ${yearlyAnalysis.class}"><strong>Yearly Performance:</strong> ${yearlyAnalysis.text}</div>`);
       }
-
-      const temporalTrend = generateTemporalTrendAnalysis(rows, param);
-      if (temporalTrend) {
-        insights.push(`<div class="insight-box ${temporalTrend.class}">${temporalTrend.text}</div>`);
       }
-    }
-
     if (params.length === 1) {
       const param = params[0];
       const values = rows.map(r => getAnalysisValue(r[param], param)).filter(v => v !== null);
