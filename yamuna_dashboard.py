@@ -1150,6 +1150,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const MONTHS = __MONTHS_JSON__;
   const PARAMS = __PARAMS_JSON__;
   const LOCS = __LOCS_JSON__;
+  window.LOCS = LOCS;  // ← ADD THIS LINE
   const YEARS = __YEARS_JSON__;
   const LOCATION_COORDS = __COORDS_JSON__;
 
@@ -2799,7 +2800,27 @@ const spModel = canApplyStreeterPhelps ?
     });
     
     html += '</div>';
-    
+    // ========================================
+    // INTERMEDIATE LOCATIONS DISPLAY
+    // ========================================
+    try {
+      const intermediateLocations = findIntermediateLocations(p1.location, p2.location, window.LOCS);
+      
+      if (intermediateLocations.length > 0 && 
+          p1.month === p2.month && 
+          p1.year === p2.year) {
+        html += `
+          <div style="background: #f0f9ff; padding: 15px; border-radius: 8px; border-left: 4px solid #0284c7; margin: 15px 0;">
+            <strong style="color: #0c4a6e;">🗺️ Intermediate Locations Between ${p1.location} and ${p2.location}:</strong><br><br>
+            <div style="font-size: 13px; color: #0369a1; line-height: 1.8;">
+              ${intermediateLocations.map(int => `• <strong>${int.location}</strong> (Lat: ${int.coords.lat.toFixed(4)}, Lng: ${int.coords.lng.toFixed(4)})`).join('<br>')}
+            </div>
+          </div>
+        `;
+      }
+    } catch (error) {
+      console.error('Error displaying intermediate locations:', error);
+    }
     // ========================================
     // STREETER-PHELPS ANALYSIS SECTION
     // ========================================
@@ -2851,15 +2872,15 @@ const spModel = canApplyStreeterPhelps ?
           </div>
           <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
             <div style="background: #f0f9ff; padding: 10px; border-radius: 6px; border-left: 3px solid #0284c7;">
-              <div style="font-size: 11px; color: #64748b;">Initial Deficit (Point 1)</div>
+              <div style="font-size: 11px; color: #64748b;">Initial Deficit (${p1.location})</div>
               <div style="font-size: 18px; font-weight: 700; color: #0284c7;">${spModel.initialDeficit.toFixed(2)} mg/L</div>
             </div>
             <div style="background: #fef3c7; padding: 10px; border-radius: 6px; border-left: 3px solid #f59e0b;">
-              <div style="font-size: 11px; color: #64748b;">Predicted Deficit (Point 2)</div>
+              <div style="font-size: 11px; color: #64748b;">Predicted Deficit (${p2.location})</div>
               <div style="font-size: 18px; font-weight: 700; color: #f59e0b;">${spModel.predictedDeficit.toFixed(2)} mg/L</div>
             </div>
             <div style="background: ${Math.abs(spModel.currentDeficit - spModel.predictedDeficit) > 1 ? '#fee2e2' : '#ecfdf5'}; padding: 10px; border-radius: 6px; border-left: 3px solid ${Math.abs(spModel.currentDeficit - spModel.predictedDeficit) > 1 ? '#ef4444' : '#10b981'};">
-              <div style="font-size: 11px; color: #64748b;">Actual Deficit (Point 2)</div>
+              <div style="font-size: 11px; color: #64748b;">Actual Deficit (${p2.location})</div>
               <div style="font-size: 18px; font-weight: 700; color: ${Math.abs(spModel.currentDeficit - spModel.predictedDeficit) > 1 ? '#ef4444' : '#10b981'};">${spModel.currentDeficit.toFixed(2)} mg/L</div>
             </div>
           </div>
@@ -2886,7 +2907,7 @@ const spModel = canApplyStreeterPhelps ?
           • BOD: ${p1.BOD.toFixed(2)} → ${p2.BOD.toFixed(2)} mg/L (${p2.BOD > p1.BOD ? '+' : ''}${(p2.BOD - p1.BOD).toFixed(2)} mg/L)<br><br>
           
           <strong>Model Prediction vs Reality:</strong><br>
-          The Streeter-Phelps model predicted DO of <strong>${spModel.predictedDO.toFixed(2)} mg/L</strong> at Point 2, 
+          The Streeter-Phelps model predicted DO of <strong>${spModel.predictedDO.toFixed(2)} mg/L</strong> at <strong>${p2.location}</strong>, 
           but actual measured DO is <strong>${spModel.actualDO.toFixed(2)} mg/L</strong> 
           (difference: <strong>${Math.abs(spModel.actualDO - spModel.predictedDO).toFixed(2)} mg/L</strong>).<br><br>
           
@@ -2903,17 +2924,17 @@ const spModel = canApplyStreeterPhelps ?
               The Streeter-Phelps model calculates <strong>instantaneous rates at each measurement point</strong>, but doesn't account for 
               <strong>pollution added between the points</strong>. Here's what happened:<br><br>
               
-              1️⃣ <strong>At Point 1:</strong> Water is recovering (net +${(spModel.rearationRate - spModel.deoxygenationRate).toFixed(3)} mg/L/day). 
+              1️⃣ <strong>At ${p1.location}:</strong> Water is recovering (net +${(spModel.rearationRate - spModel.deoxygenationRate).toFixed(3)} mg/L/day). 
               As this water flows downstream, DO <em>should</em> increase.<br><br>
               
               2️⃣ <strong>Between Points:</strong> <strong style="color:#991b1b;">NEW POLLUTION SOURCE</strong> added ${bodChange.toFixed(2)} mg/L of BOD. 
-              This fresh organic load immediately consumed oxygen, offsetting any recovery from Point 1.<br><br>
+              This fresh organic load immediately consumed oxygen, offsetting any recovery from ${p1.location}.<br><br>
               
-              3️⃣ <strong>At Point 2:</strong> The "snapshot" rates show recovery potential (net +${((spModel.k2 * (spModel.DOsat - p2.DO)) - (spModel.k1 * p2.BOD)).toFixed(3)} mg/L/day), 
-              but this only tells us what's happening <em>right now at Point 2</em> - it doesn't reflect the oxygen already consumed by the pollution spike.<br><br>
+              3️⃣ <strong>At ${p2.location}:</strong> The "snapshot" rates show recovery potential (net +${((spModel.k2 * (spModel.DOsat - p2.DO)) - (spModel.k1 * p2.BOD)).toFixed(3)} mg/L/day), 
+              but this only tells us what's happening <em>right now at ${p2.location}</em> - it doesn't reflect the oxygen already consumed by the pollution spike.<br><br>
               
               <strong>Bottom Line:</strong> The oxygen consumed by the ${bodChange.toFixed(2)} mg/L BOD increase between points 
-              <strong>canceled out</strong> the natural reaeration that occurred. Think of it as: the river was healing (+${(spModel.rearationRate - spModel.deoxygenationRate).toFixed(1)} mg/L/day at Point 1), 
+              <strong>canceled out</strong> the natural reaeration that occurred. Think of it as: the river was healing (+${(spModel.rearationRate - spModel.deoxygenationRate).toFixed(1)} mg/L/day at ${p1.location}), 
               but then got a fresh wound (new pollution) that consumed all the healing progress.</span>`;
             }
             
@@ -2937,7 +2958,7 @@ const spModel = canApplyStreeterPhelps ?
           <strong>Process Analysis Comparison:</strong><br>
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px;">
             <div style="background: #f0f9ff; padding: 10px; border-radius: 6px; border-left: 3px solid #0284c7;">
-              <div style="font-weight: 600; margin-bottom: 6px;">📍 Point 1 Rates</div>
+              <div style="font-weight: 600; margin-bottom: 6px;">📍 ${p1.location} Rates</div>
               • Deoxygenation: <strong>${spModel.deoxygenationRate.toFixed(3)} mg/L/day</strong><br>
               • Reaeration: <strong>${spModel.rearationRate.toFixed(3)} mg/L/day</strong><br>
               • Net: <strong>${(spModel.rearationRate - spModel.deoxygenationRate).toFixed(3)} mg/L/day</strong>
@@ -2945,7 +2966,7 @@ const spModel = canApplyStreeterPhelps ?
             </div>
             
             <div style="background: ${p2.BOD > p1.BOD ? '#fef2f2' : '#ecfdf5'}; padding: 10px; border-radius: 6px; border-left: 3px solid ${p2.BOD > p1.BOD ? '#ef4444' : '#10b981'};">
-              <div style="font-weight: 600; margin-bottom: 6px;">📍 Point 2 Rates (calculated)</div>
+              <div style="font-weight: 600; margin-bottom: 6px;">📍 ${p2.location} Rates (calculated)</div>
               • Deoxygenation: <strong>${(spModel.k1 * p2.BOD).toFixed(3)} mg/L/day</strong><br>
               • Reaeration: <strong>${(spModel.k2 * (spModel.DOsat - p2.DO)).toFixed(3)} mg/L/day</strong><br>
               • Net: <strong>${((spModel.k2 * (spModel.DOsat - p2.DO)) - (spModel.k1 * p2.BOD)).toFixed(3)} mg/L/day</strong>
@@ -2978,8 +2999,8 @@ const spModel = canApplyStreeterPhelps ?
         <strong>two different locations</strong> (spatial comparison) during the <strong>same time period</strong> (same month and year).<br><br>
         
         <strong>Current comparison:</strong><br>
-        • Point 1: ${p1.location}, ${p1.month} ${p1.year}<br>
-        • Point 2: ${p2.location}, ${p2.month} ${p2.year}<br><br>
+        - <strong>${p1.location}</strong>, ${p1.month} ${p1.year}<br>
+        - <strong>${p2.location}</strong>, ${p2.month} ${p2.year}<br><br>
         
         ${p1.location === p2.location ? 
           '❌ <strong>Same location</strong> - Cannot model river flow between identical points' : 
@@ -3040,7 +3061,73 @@ const spModel = canApplyStreeterPhelps ?
       }
     }
   };
-
+function findIntermediateLocations(location1, location2, allLocations) {
+  const coords1 = LOCATION_COORDS[location1];
+  const coords2 = LOCATION_COORDS[location2];
+  
+  if (!coords1 || !coords2) return [];
+  
+  // IT'S "lng" NOT "lon"!
+  const lat1 = parseFloat(coords1.lat);
+  const lng1 = parseFloat(coords1.lng);
+  const lat2 = parseFloat(coords2.lat);
+  const lng2 = parseFloat(coords2.lng);
+  
+  console.log('Coordinates:', { lat1, lng1, lat2, lng2 });
+  
+  if (isNaN(lat1) || isNaN(lng1) || isNaN(lat2) || isNaN(lng2)) {
+    console.log('❌ Invalid coordinates');
+    return [];
+  }
+  
+  const intermediates = [];
+  const mainDistance = Math.sqrt(
+    Math.pow(lat2 - lat1, 2) + 
+    Math.pow(lng2 - lng1, 2)
+  );
+  
+  console.log('Main distance:', mainDistance.toFixed(6));
+  
+  allLocations.forEach(loc => {
+    if (loc === location1 || loc === location2) return;
+    
+    const coords = LOCATION_COORDS[loc];
+    if (!coords) return;
+    
+    const lat = parseFloat(coords.lat);
+    const lng = parseFloat(coords.lng);
+    
+    if (isNaN(lat) || isNaN(lng)) return;
+    
+    const dist1 = Math.sqrt(
+      Math.pow(lat - lat1, 2) + 
+      Math.pow(lng - lng1, 2)
+    );
+    
+    const dist2 = Math.sqrt(
+      Math.pow(lat - lat2, 2) + 
+      Math.pow(lng - lng2, 2)
+    );
+    
+    const sumDist = dist1 + dist2;
+    const tolerance = mainDistance * 0.3;
+    const diff = Math.abs(sumDist - mainDistance);
+    
+    if (diff <= tolerance) {
+      intermediates.push({ 
+        location: loc, 
+        distance: dist1,
+        coords: { lat, lng }
+      });
+      console.log('✓ Found intermediate:', loc);
+    }
+  });
+  
+  intermediates.sort((a, b) => a.distance - b.distance);
+  console.log('Total found:', intermediates.length);
+  
+  return intermediates;
+}
   // Initialize comparison tool after charts are rendered
   setTimeout(() => {
     initializeComparisonTool();
